@@ -14,6 +14,7 @@ services:
             - aegis-net
         volumes:
             - postgres_data:/var/lib/postgresql/data
+            - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
         healthcheck:
             test: ["CMD-SHELL", "pg_isready -U aegis -d aegis"]
             interval: 8s
