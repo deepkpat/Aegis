@@ -6,10 +6,11 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0.104"
 axum = "0.8.9"
+chrono = { version = "0.4.45", features = ["serde"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 serde_yaml = "0.9.34"
-sqlx = { version = "0.9.0", features = ["postgres", "runtime-tokio", "tls-native-tls"] }
+sqlx = { version = "0.9.0", features = ["chrono", "json", "postgres", "runtime-tokio", "tls-native-tls"] }
 tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "net", "signal", "time"] }
 tower-http = { version = "0.7.1", features = ["timeout"] }
 tracing = "0.1.44"

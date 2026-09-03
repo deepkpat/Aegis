@@ -1,14 +1,25 @@
 use std::time::Duration;
 
+use chrono::{DateTime, Utc};
+use serde::Serialize;
 use sqlx::postgres::{PgPool, PgPoolOptions};
 
 use crate::config::DatabaseConfig;
 
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct Record {
+    pub id: String,
+    pub payload: serde_json::Value,
+    pub version: i32,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
 pub async fn create_pool(cfg: &DatabaseConfig) -> anyhow::Result<PgPool> {
-    let pool = PgPoolOptions::new()
+    PgPoolOptions::new()
         .max_connections(cfg.max_connections)
         .acquire_timeout(Duration::from_secs(cfg.acquire_timeout_secs))
         .connect(&cfg.url)
-        .await?;
-    Ok(pool)
+        .await
+        .map_err(Into::into)
 }
