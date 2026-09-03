@@ -1,5 +1,6 @@
 use aegis::api::router::app_router;
 use aegis::config::AppConfig;
+use aegis::db::create_pool;
 
 use axum::http::StatusCode;
 use std::time::Duration;
@@ -16,8 +17,9 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let cfg = AppConfig::from_file("config.yaml")?;
+    let pool = create_pool(&cfg.database).await?;
 
-    let app = app_router().layer(TimeoutLayer::with_status_code(
+    let app = app_router(pool).layer(TimeoutLayer::with_status_code(
         StatusCode::REQUEST_TIMEOUT,
         Duration::from_secs(cfg.server.request_timeout_secs),
     ));

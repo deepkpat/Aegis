@@ -1,10 +1,12 @@
 use serde::{Deserialize, Serialize};
 
+use super::database::DatabaseConfig;
 use super::server::ServerConfig;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AppConfig {
     pub server: ServerConfig,
+    pub database: DatabaseConfig,
 }
 
 impl AppConfig {
