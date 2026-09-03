@@ -1,6 +1,7 @@
 use axum::{Json, http::StatusCode, response::IntoResponse};
 use serde_json::json;
 
+#[derive(Debug)]
 pub enum ApiError {
     NotFound(String),
     Conflict(String),

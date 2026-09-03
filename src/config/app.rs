@@ -11,9 +11,11 @@ pub struct AppConfig {
 }
 
 impl AppConfig {
-    pub fn from_file(path: &str) -> anyhow::Result<Self> {
+    pub fn from_file(path: impl AsRef<std::path::Path>) -> anyhow::Result<Self> {
+        let path = path.as_ref();
         let content = std::fs::read_to_string(path)
-            .with_context(|| format!("failed to read config {path}"))?;
-        serde_yaml::from_str(&content).with_context(|| format!("failed to parse config {path}"))
+            .with_context(|| format!("failed to read config {}", path.display()))?;
+        serde_yaml::from_str(&content)
+            .with_context(|| format!("failed to parse config {}", path.display()))
     }
 }

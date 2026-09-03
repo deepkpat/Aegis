@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;
-use sqlx::postgres::{PgPool, PgPoolOptions};
+use sqlx::{PgPool, postgres::PgPoolOptions};
 
 use crate::config::DatabaseConfig;
 
@@ -16,10 +16,9 @@ pub struct Record {
 }
 
 pub async fn create_pool(cfg: &DatabaseConfig) -> anyhow::Result<PgPool> {
-    PgPoolOptions::new()
+    Ok(PgPoolOptions::new()
         .max_connections(cfg.max_connections)
         .acquire_timeout(Duration::from_secs(cfg.acquire_timeout_secs))
         .connect(&cfg.url)
-        .await
-        .map_err(Into::into)
+        .await?)
 }

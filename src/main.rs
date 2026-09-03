@@ -24,8 +24,9 @@ async fn main() -> anyhow::Result<()> {
         Duration::from_secs(cfg.server.request_timeout_secs),
     ));
 
-    info!(addr = %cfg.server.addr(), "listening");
-    let listener = TcpListener::bind(cfg.server.addr()).await?;
+    let addr = cfg.server.addr();
+    info!(addr = %addr, "listening");
+    let listener = TcpListener::bind(&addr).await?;
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
@@ -36,13 +37,15 @@ async fn main() -> anyhow::Result<()> {
 
 async fn shutdown_signal() {
     let ctrl_c = async {
-        tokio::signal::ctrl_c().await.unwrap();
+        tokio::signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
     };
 
     #[cfg(unix)]
     let terminate = async {
         tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .unwrap()
+            .expect("failed to install SIGTERM handler")
             .recv()
             .await;
     };
