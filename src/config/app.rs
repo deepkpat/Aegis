@@ -2,12 +2,14 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
 use super::database::DatabaseConfig;
+use super::redis::RedisConfig;
 use super::server::ServerConfig;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AppConfig {
     pub server: ServerConfig,
-    pub database: DatabaseConfig,
+    pub postgres: DatabaseConfig,
+    pub redis: RedisConfig,
 }
 
 impl AppConfig {

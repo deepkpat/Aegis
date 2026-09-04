@@ -1,6 +1,6 @@
-use aegis::api::router::app_router;
+use aegis::api::router::{AppState, app_router};
 use aegis::config::AppConfig;
-use aegis::db::create_pool;
+use aegis::db::{create_connection_manager, create_pool};
 
 use axum::http::StatusCode;
 use std::time::Duration;
@@ -17,9 +17,11 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let cfg = AppConfig::from_file("config.yaml")?;
-    let pool = create_pool(&cfg.database).await?;
+    let pg = create_pool(&cfg.postgres).await?;
+    let redis = create_connection_manager(&cfg.redis).await?;
 
-    let app = app_router(pool).layer(TimeoutLayer::with_status_code(
+    let state = AppState { pg, redis };
+    let app = app_router(state).layer(TimeoutLayer::with_status_code(
         StatusCode::REQUEST_TIMEOUT,
         Duration::from_secs(cfg.server.request_timeout_secs),
     ));

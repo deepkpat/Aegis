@@ -3,7 +3,11 @@ server:
   port: 8000
   request_timeout_secs: 32
   shutdown_timeout_secs: 16
-database:
+
+postgres:
   url: "postgres://aegis:aegis@localhost:5432/aegis"
   max_connections: 16
   acquire_timeout_secs: 4
+
+redis:
+  url: "redis://localhost:6379"
