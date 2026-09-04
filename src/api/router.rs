@@ -10,7 +10,11 @@ use super::health::{health, ready};
 use super::records::{create_record, delete_record, get_record, patch_record};
 use super::slindow::slindow_middleware;
 use crate::cache::{MokaCache, RedisCache};
+use crate::coalescer::Coalescer;
+use crate::db::Record;
 use crate::limiters::SlindowLimiter;
+
+use super::errors::ApiError;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -19,6 +23,7 @@ pub struct AppState {
     pub moka: Option<MokaCache>,
     pub redis_cache: Option<RedisCache>,
     pub limiter: Option<SlindowLimiter>,
+    pub coalescer: Option<Coalescer<Record, ApiError>>,
 }
 
 impl FromRef<AppState> for PgPool {
@@ -48,6 +53,12 @@ impl FromRef<AppState> for Option<RedisCache> {
 impl FromRef<AppState> for Option<SlindowLimiter> {
     fn from_ref(state: &AppState) -> Self {
         state.limiter.clone()
+    }
+}
+
+impl FromRef<AppState> for Option<Coalescer<Record, ApiError>> {
+    fn from_ref(state: &AppState) -> Self {
+        state.coalescer.clone()
     }
 }
 

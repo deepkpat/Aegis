@@ -60,6 +60,20 @@ pub async fn create_record(
     Ok((StatusCode::CREATED, Json(rec)))
 }
 
+async fn fetch_pg(state: &AppState, id: &str) -> Result<Record, ApiError> {
+    let rec = sqlx::query_as::<_, Record>(
+        "SELECT id, payload, version, created_at, updated_at FROM records WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(&state.pg)
+    .await?;
+    let Some(rec) = rec else {
+        return Err(ApiError::NotFound(format!("Record '{id}' does not exist")));
+    };
+    fill_caches(state, &rec).await;
+    Ok(rec)
+}
+
 pub async fn get_record(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -77,17 +91,13 @@ pub async fn get_record(
         }
         return Ok(Json(rec));
     }
-    let rec = sqlx::query_as::<_, Record>(
-        "SELECT id, payload, version, created_at, updated_at FROM records WHERE id = $1",
-    )
-    .bind(&id)
-    .fetch_optional(&state.pg)
-    .await?;
-    let Some(rec) = rec else {
-        return Err(ApiError::NotFound(format!("Record '{id}' does not exist")));
-    };
-    fill_caches(&state, &rec).await;
-    Ok(Json(rec))
+    if let Some(coalescer) = &state.coalescer {
+        return coalescer
+            .execute(&id, || fetch_pg(&state, &id))
+            .await
+            .map(Json);
+    }
+    fetch_pg(&state, &id).await.map(Json)
 }
 
 pub async fn patch_record(

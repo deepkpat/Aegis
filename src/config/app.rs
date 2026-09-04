@@ -2,6 +2,7 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
 use super::cache::CacheConfig;
+use super::coalescer::CoalescerConfig;
 use super::database::PostgresConfig;
 use super::redis::RedisConfig;
 use super::server::ServerConfig;
@@ -14,6 +15,7 @@ pub struct AppConfig {
     pub redis: RedisConfig,
     pub cache: CacheConfig,
     pub slindow: SlindowConfig,
+    pub coalescer: CoalescerConfig,
 }
 
 impl AppConfig {

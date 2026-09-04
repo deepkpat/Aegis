@@ -1,5 +1,6 @@
 use aegis::api::router::{AppState, app_router};
 use aegis::cache::{MokaCache, RedisCache};
+use aegis::coalescer::Coalescer;
 use aegis::config::AppConfig;
 use aegis::db::{create_connection_manager, create_pool};
 use aegis::limiters::SlindowLimiter;
@@ -25,6 +26,7 @@ async fn main() -> anyhow::Result<()> {
     let moka = MokaCache::new(&cfg.cache.moka);
     let redis_cache = RedisCache::new(&cfg.cache.redis, redis.clone());
     let limiter = SlindowLimiter::new(&cfg.slindow, redis.clone());
+    let coalescer = Coalescer::new(&cfg.coalescer);
 
     let state = AppState {
         pg,
@@ -32,6 +34,7 @@ async fn main() -> anyhow::Result<()> {
         moka,
         redis_cache,
         limiter,
+        coalescer,
     };
     let app = app_router(state).layer(TimeoutLayer::with_status_code(
         StatusCode::REQUEST_TIMEOUT,
