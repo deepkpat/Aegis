@@ -15,6 +15,7 @@ pub struct SlindowLimiter {
     key_prefix: String,
     limit: u32,
     window_ms: u64,
+    script: String,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -31,11 +32,19 @@ impl SlindowLimiter {
         if !cfg.enabled {
             return None;
         }
+        let script = match std::fs::read_to_string(&cfg.script_path) {
+            Ok(src) => src,
+            Err(e) => {
+                tracing::warn!(path = %cfg.script_path.display(), error = %e, "slindow script not readable, using embedded script");
+                SLINDOW_SCRIPT.to_owned()
+            }
+        };
         Some(Self {
             conn,
             key_prefix: cfg.key_prefix.clone(),
             limit: cfg.requests_per_window,
             window_ms: cfg.window_secs * 1000,
+            script,
         })
     }
 
@@ -51,7 +60,7 @@ impl SlindowLimiter {
         let seq = MEMBER_SEQ.fetch_add(1, Ordering::Relaxed);
         let member = format!("{now_ms}:{seq}");
         let mut conn = self.conn.clone();
-        let res: redis::RedisResult<(i32, i32, i64)> = Script::new(SLINDOW_SCRIPT)
+        let res: redis::RedisResult<(i32, i32, i64)> = Script::new(&self.script)
             .key(self.key(ip))
             .arg(now_ms)
             .arg(self.window_ms)

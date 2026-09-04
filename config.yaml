@@ -28,3 +28,4 @@ slindow:
   requests_per_window: 1024
   window_secs: 60
   key_prefix: "aegis:ratelimit:"
+  script_path: "scripts/slindow.lua"
