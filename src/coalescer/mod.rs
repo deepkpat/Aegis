@@ -55,6 +55,7 @@ where
                     let _ = tx.send(result.clone());
                 }
                 guard.remove(key);
+                drop(guard);
                 return result;
             }
         };
@@ -73,7 +74,7 @@ where
         loop {
             match rx.recv().await {
                 Ok(v) => return v,
-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Lagged(_)) => {}
                 Err(broadcast::error::RecvError::Closed) => {
                     tracing::warn!(key = %key, "coalescer leader dropped, fail-open");
                     return fut().await;

@@ -45,12 +45,13 @@ pub async fn slindow_middleware(
         let mut res = next.run(req).await;
         res.headers_mut().insert(
             "x-ratelimit-limit",
-            HeaderValue::from_str(&d.limit.to_string()).unwrap_or(HeaderValue::from_static("0")),
+            HeaderValue::from_str(&d.limit.to_string())
+                .unwrap_or_else(|_| HeaderValue::from_static("0")),
         );
         res.headers_mut().insert(
             "x-ratelimit-remaining",
             HeaderValue::from_str(&d.limit.saturating_sub(d.count).to_string())
-                .unwrap_or(HeaderValue::from_static("0")),
+                .unwrap_or_else(|_| HeaderValue::from_static("0")),
         );
         return res;
     }

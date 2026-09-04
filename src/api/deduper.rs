@@ -40,24 +40,22 @@ pub async fn deduper_middleware(
     }
 
     // 1. Extract and validate the client-supplied idempotency key.
-    let client_key = request
+    let Some(client_key) = request
         .headers()
         .get(&deduper.header_name)
         .and_then(|v| v.to_str().ok())
         .map(str::trim)
         .filter(|k| Deduper::validate_key(k))
-        .map(str::to_owned);
-
-    let client_key = match client_key {
-        Some(k) => k,
-        None if deduper.require_key => {
+        .map(str::to_owned)
+    else {
+        if deduper.require_key {
             return (
                 StatusCode::BAD_REQUEST,
                 format!("missing or invalid `{}` header", deduper.header_name),
             )
                 .into_response();
         }
-        None => return next.run(request).await, // key optional: pass through
+        return next.run(request).await;
     };
 
     // 2. Claim. `None` means a deduper subsystem error → fail-open.

@@ -55,8 +55,7 @@ impl SlindowLimiter {
     pub async fn check(&self, ip: &str) -> SlindowDecision {
         let now_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0);
+            .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
         let seq = MEMBER_SEQ.fetch_add(1, Ordering::Relaxed);
         let member = format!("{now_ms}:{seq}");
         let mut conn = self.conn.clone();
@@ -71,9 +70,9 @@ impl SlindowLimiter {
         match res {
             Ok((allowed, count, ttl_ms)) => SlindowDecision {
                 allowed: allowed == 1,
-                count: count as u32,
+                count: count.cast_unsigned(),
                 limit: self.limit,
-                retry_after_secs: (ttl_ms.max(0) as u64).div_ceil(1000),
+                retry_after_secs: ttl_ms.max(0).cast_unsigned().div_ceil(1000),
             },
             Err(e) => {
                 tracing::warn!(error = %e, "sliding-window check failed, fail-open");

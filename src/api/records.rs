@@ -111,14 +111,12 @@ pub async fn patch_record(
         .bind(&id)
         .fetch_optional(&state.pg)
         .await?;
-    Err(current.map_or_else(
-        || ApiError::NotFound(format!("Record '{id}' does not exist")),
-        |v| {
-            ApiError::VersionMismatch(format!(
-                "Current version is {v}, but expected version was {expected_version}"
-            ))
-        },
-    ))
+    Err(match current {
+        None => ApiError::NotFound(format!("Record '{id}' does not exist")),
+        Some(v) => ApiError::VersionMismatch(format!(
+            "Current version is {v}, but expected version was {expected_version}"
+        )),
+    })
 }
 
 pub async fn put_record(
@@ -135,10 +133,9 @@ pub async fn put_record(
     .fetch_one(&state.pg)
     .await?;
     fill_caches(&state, &rec).await;
-    let status = if rec.version == 1 {
-        StatusCode::CREATED
-    } else {
-        StatusCode::OK
+    let status = match rec.version {
+        1 => StatusCode::CREATED,
+        _ => StatusCode::OK,
     };
     Ok((status, Json(rec)))
 }

@@ -44,20 +44,24 @@ impl CompositeCache {
     }
 
     pub async fn insert(&self, record: &Record) {
-        if let Some(moka) = &self.moka {
-            moka.insert(record).await;
-        }
-        if let Some(redis) = &self.redis {
-            redis.set(record).await;
+        match (&self.moka, &self.redis) {
+            (Some(moka), Some(redis)) => {
+                tokio::join!(moka.insert(record), redis.set(record));
+            }
+            (Some(moka), None) => moka.insert(record).await,
+            (None, Some(redis)) => redis.set(record).await,
+            (None, None) => {}
         }
     }
 
     pub async fn invalidate(&self, id: &str) {
-        if let Some(moka) = &self.moka {
-            moka.invalidate(id).await;
-        }
-        if let Some(redis) = &self.redis {
-            redis.invalidate(id).await;
+        match (&self.moka, &self.redis) {
+            (Some(moka), Some(redis)) => {
+                tokio::join!(moka.invalidate(id), redis.invalidate(id));
+            }
+            (Some(moka), None) => moka.invalidate(id).await,
+            (None, Some(redis)) => redis.invalidate(id).await,
+            (None, None) => {}
         }
     }
 }

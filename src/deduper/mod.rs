@@ -52,6 +52,7 @@ impl DeduperRedis {
         }
     }
 
+    #[must_use]
     pub fn redis_key(&self, method: &str, path: &str, client_key: &str) -> String {
         format!("{}{method}:{path}:{client_key}", self.key_prefix)
     }
@@ -175,7 +176,7 @@ impl fmt::Debug for DeduperBloom {
 impl DeduperBloom {
     fn new(cfg: &DeduperBloomConfig) -> Self {
         let num_buckets = cfg.buckets.max(1);
-        let capacity = cfg.capacity.max(1) as usize;
+        let capacity = usize::try_from(cfg.capacity.max(1)).unwrap_or(usize::MAX);
         // `with_false_pos` panics on fp == 0, so clamp to a strict positive
         // lower bound; values near 1 are meaningless, clamp those too.
         let false_positive_rate = cfg.false_positive_rate.clamp(f64::MIN_POSITIVE, 0.999_999);
@@ -201,7 +202,7 @@ impl DeduperBloom {
         BloomFilter::with_false_pos(false_positive_rate).expected_items(capacity)
     }
 
-    async fn rotate_if_due(&self, ring: &mut BloomRing) {
+    fn rotate_if_due(&self, ring: &mut BloomRing) {
         if ring.last_rotation.elapsed() >= self.bucket_ttl {
             ring.current = (ring.current + 1) % ring.buckets.len();
             ring.buckets[ring.current] =
@@ -214,13 +215,13 @@ impl DeduperBloom {
     /// definitive (zero false negatives within the retention window).
     pub async fn maybe_contains(&self, key: &str) -> bool {
         let mut ring = self.inner.write().await;
-        self.rotate_if_due(&mut ring).await;
+        self.rotate_if_due(&mut ring);
         ring.buckets.iter().any(|b| b.contains(key))
     }
 
     pub async fn insert(&self, key: &str) {
         let mut ring = self.inner.write().await;
-        self.rotate_if_due(&mut ring).await;
+        self.rotate_if_due(&mut ring);
         let current = ring.current;
         ring.buckets[current].insert(key);
     }
@@ -283,6 +284,7 @@ impl Deduper {
         })
     }
 
+    #[must_use]
     pub fn validate_key(key: &str) -> bool {
         !key.trim().is_empty() && key.len() <= 255
     }
@@ -292,32 +294,32 @@ impl Deduper {
         // a completed request, so we skip the Redis read and go straight to
         // lock acquisition. Concurrent in-flight duplicates are still caught
         // by the SET NX below.
-        if let Some(bloom) = &self.bloom {
-            if !bloom.maybe_contains(client_key).await {
-                tracing::debug!(%client_key, "bloom miss, skipping redis read");
-                if let Some(redis) = &self.redis {
-                    return match redis.claim(method, path, client_key).await? {
-                        RedisClaim::Fresh { redis_key } => Some(Claim::Fresh {
-                            redis_key: Some(redis_key),
-                            bloom_key: Some(client_key.to_owned()),
-                        }),
-                        RedisClaim::Replay {
-                            status,
-                            body,
-                            content_type,
-                        } => Some(Claim::Replay {
-                            status,
-                            body,
-                            content_type,
-                        }),
-                        RedisClaim::InFlight => Some(Claim::InFlight),
-                    };
-                }
-                return Some(Claim::Fresh {
-                    redis_key: None,
-                    bloom_key: Some(client_key.to_owned()),
-                });
+        if let Some(bloom) = &self.bloom
+            && !bloom.maybe_contains(client_key).await
+        {
+            tracing::debug!(%client_key, "bloom miss, skipping redis read");
+            if let Some(redis) = &self.redis {
+                return match redis.claim(method, path, client_key).await? {
+                    RedisClaim::Fresh { redis_key } => Some(Claim::Fresh {
+                        redis_key: Some(redis_key),
+                        bloom_key: Some(client_key.to_owned()),
+                    }),
+                    RedisClaim::Replay {
+                        status,
+                        body,
+                        content_type,
+                    } => Some(Claim::Replay {
+                        status,
+                        body,
+                        content_type,
+                    }),
+                    RedisClaim::InFlight => Some(Claim::InFlight),
+                };
             }
+            return Some(Claim::Fresh {
+                redis_key: None,
+                bloom_key: Some(client_key.to_owned()),
+            });
         }
 
         let redis = self.redis.as_ref()?;
