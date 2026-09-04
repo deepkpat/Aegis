@@ -20,20 +20,14 @@ fn validate_id(id: &str) -> Result<(), ApiError> {
 }
 
 async fn fill_caches(state: &AppState, record: &Record) {
-    if let Some(moka) = &state.moka {
-        moka.insert(record).await;
-    }
-    if let Some(redis_cache) = &state.redis_cache {
-        redis_cache.set(record).await;
+    if let Some(cache) = &state.cache {
+        cache.insert(record).await;
     }
 }
 
 async fn invalidate_caches(state: &AppState, id: &str) {
-    if let Some(moka) = &state.moka {
-        moka.invalidate(id).await;
-    }
-    if let Some(redis_cache) = &state.redis_cache {
-        redis_cache.invalidate(id).await;
+    if let Some(cache) = &state.cache {
+        cache.invalidate(id).await;
     }
 }
 
@@ -78,17 +72,9 @@ pub async fn get_record(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<Record>, ApiError> {
-    if let Some(moka) = &state.moka
-        && let Some(rec) = moka.get(&id).await
+    if let Some(cache) = &state.cache
+        && let Some(rec) = cache.get(&id).await
     {
-        return Ok(Json(rec));
-    }
-    if let Some(redis_cache) = &state.redis_cache
-        && let Some(rec) = redis_cache.get(&id).await
-    {
-        if let Some(moka) = &state.moka {
-            moka.insert(&rec).await;
-        }
         return Ok(Json(rec));
     }
     if let Some(coalescer) = &state.coalescer {

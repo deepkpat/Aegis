@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct CacheConfig {
+    pub enabled: bool,
     pub moka: MokaConfig,
     pub redis: RedisCacheConfig,
 }

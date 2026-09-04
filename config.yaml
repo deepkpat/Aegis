@@ -13,6 +13,7 @@ redis:
   url: "redis://localhost:6379"
 
 cache:
+  enabled: true
   moka:
     enabled: true
     max_capacity: 4096

@@ -10,7 +10,7 @@ use super::deduper::deduper_middleware;
 use super::health::{health, ready};
 use super::records::{create_record, delete_record, get_record, patch_record, put_record};
 use super::slindow::slindow_middleware;
-use crate::cache::{MokaCache, RedisCache};
+use crate::cache::CompositeCache;
 use crate::coalescer::Coalescer;
 use crate::db::Record;
 use crate::deduper::Deduper;
@@ -22,8 +22,7 @@ use super::errors::ApiError;
 pub struct AppState {
     pub pg: PgPool,
     pub redis: ConnectionManager,
-    pub moka: Option<MokaCache>,
-    pub redis_cache: Option<RedisCache>,
+    pub cache: Option<CompositeCache>,
     pub limiter: Option<SlindowLimiter>,
     pub coalescer: Option<Coalescer<Record, ApiError>>,
     pub deduper: Option<Deduper>,
@@ -41,15 +40,9 @@ impl FromRef<AppState> for ConnectionManager {
     }
 }
 
-impl FromRef<AppState> for Option<MokaCache> {
+impl FromRef<AppState> for Option<CompositeCache> {
     fn from_ref(state: &AppState) -> Self {
-        state.moka.clone()
-    }
-}
-
-impl FromRef<AppState> for Option<RedisCache> {
-    fn from_ref(state: &AppState) -> Self {
-        state.redis_cache.clone()
+        state.cache.clone()
     }
 }
 
