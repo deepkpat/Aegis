@@ -11,3 +11,14 @@ postgres:
 
 redis:
   url: "redis://localhost:6379"
+
+cache:
+  moka:
+    enabled: true
+    max_capacity: 10000
+    time_to_live_secs: 300
+    time_to_idle_secs: 60
+  redis:
+    enabled: true
+    ttl_secs: 600
+    key_prefix: "aegis:records:"

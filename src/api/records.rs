@@ -3,10 +3,10 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
 };
-use sqlx::PgPool;
 
 use super::errors::ApiError;
 use super::models::{CreateRecordRequest, PatchRecordRequest};
+use super::router::AppState;
 use crate::db::Record;
 
 fn validate_id(id: &str) -> Result<(), ApiError> {
@@ -19,8 +19,26 @@ fn validate_id(id: &str) -> Result<(), ApiError> {
     Ok(())
 }
 
+async fn fill_caches(state: &AppState, record: &Record) {
+    if let Some(moka) = &state.moka {
+        moka.insert(record).await;
+    }
+    if let Some(redis_cache) = &state.redis_cache {
+        redis_cache.set(record).await;
+    }
+}
+
+async fn invalidate_caches(state: &AppState, id: &str) {
+    if let Some(moka) = &state.moka {
+        moka.invalidate(id).await;
+    }
+    if let Some(redis_cache) = &state.redis_cache {
+        redis_cache.invalidate(id).await;
+    }
+}
+
 pub async fn create_record(
-    State(pool): State<PgPool>,
+    State(state): State<AppState>,
     Json(body): Json<CreateRecordRequest>,
 ) -> Result<(StatusCode, Json<Record>), ApiError> {
     validate_id(&body.id)?;
@@ -30,7 +48,7 @@ pub async fn create_record(
     )
     .bind(&id)
     .bind(payload)
-    .fetch_one(&pool)
+    .fetch_one(&state.pg)
     .await
     .map_err(|e| match &e {
         sqlx::Error::Database(db) if db.code().as_deref() == Some("23505") => {
@@ -38,25 +56,44 @@ pub async fn create_record(
         }
         _ => ApiError::from(e),
     })?;
+    fill_caches(&state, &rec).await;
     Ok((StatusCode::CREATED, Json(rec)))
 }
 
 pub async fn get_record(
-    State(pool): State<PgPool>,
+    State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<Record>, ApiError> {
+    if let Some(moka) = &state.moka
+        && let Some(rec) = moka.get(&id).await
+    {
+        return Ok(Json(rec));
+    }
+    if let Some(redis_cache) = &state.redis_cache
+        && let Some(rec) = redis_cache.get(&id).await
+    {
+        if let Some(moka) = &state.moka {
+            moka.insert(&rec).await;
+        }
+        return Ok(Json(rec));
+    }
     let rec = sqlx::query_as::<_, Record>(
         "SELECT id, payload, version, created_at, updated_at FROM records WHERE id = $1",
     )
     .bind(&id)
-    .fetch_optional(&pool)
+    .fetch_optional(&state.pg)
     .await?;
-    rec.map(Json)
-        .ok_or_else(|| ApiError::NotFound(format!("Record '{id}' does not exist")))
+    match rec {
+        Some(rec) => {
+            fill_caches(&state, &rec).await;
+            Ok(Json(rec))
+        }
+        None => Err(ApiError::NotFound(format!("Record '{id}' does not exist"))),
+    }
 }
 
 pub async fn patch_record(
-    State(pool): State<PgPool>,
+    State(state): State<AppState>,
     Path(id): Path<String>,
     Json(body): Json<PatchRecordRequest>,
 ) -> Result<Json<Record>, ApiError> {
@@ -70,14 +107,15 @@ pub async fn patch_record(
     .bind(payload)
     .bind(&id)
     .bind(expected_version)
-    .fetch_optional(&pool)
+    .fetch_optional(&state.pg)
     .await?
     {
+        fill_caches(&state, &rec).await;
         return Ok(Json(rec));
     }
     let current = sqlx::query_scalar::<_, i32>("SELECT version FROM records WHERE id = $1")
         .bind(&id)
-        .fetch_optional(&pool)
+        .fetch_optional(&state.pg)
         .await?;
     match current {
         None => Err(ApiError::NotFound(format!("Record '{id}' does not exist"))),
@@ -88,15 +126,16 @@ pub async fn patch_record(
 }
 
 pub async fn delete_record(
-    State(pool): State<PgPool>,
+    State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, ApiError> {
     let res = sqlx::query("DELETE FROM records WHERE id = $1")
         .bind(&id)
-        .execute(&pool)
+        .execute(&state.pg)
         .await?;
     if res.rows_affected() == 0 {
         return Err(ApiError::NotFound(format!("Record '{id}' does not exist")));
     }
+    invalidate_caches(&state, &id).await;
     Ok(StatusCode::NO_CONTENT)
 }

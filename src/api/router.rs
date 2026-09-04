@@ -8,11 +8,14 @@ use sqlx::PgPool;
 
 use super::health::{health, ready};
 use super::records::{create_record, delete_record, get_record, patch_record};
+use crate::cache::{MokaCache, RedisCache};
 
 #[derive(Clone)]
 pub struct AppState {
     pub pg: PgPool,
     pub redis: ConnectionManager,
+    pub moka: Option<MokaCache>,
+    pub redis_cache: Option<RedisCache>,
 }
 
 impl FromRef<AppState> for PgPool {
@@ -24,6 +27,18 @@ impl FromRef<AppState> for PgPool {
 impl FromRef<AppState> for ConnectionManager {
     fn from_ref(state: &AppState) -> Self {
         state.redis.clone()
+    }
+}
+
+impl FromRef<AppState> for Option<MokaCache> {
+    fn from_ref(state: &AppState) -> Self {
+        state.moka.clone()
+    }
+}
+
+impl FromRef<AppState> for Option<RedisCache> {
+    fn from_ref(state: &AppState) -> Self {
+        state.redis_cache.clone()
     }
 }
 

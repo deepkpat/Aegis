@@ -1,4 +1,5 @@
 use aegis::api::router::{AppState, app_router};
+use aegis::cache::{MokaCache, RedisCache};
 use aegis::config::AppConfig;
 use aegis::db::{create_connection_manager, create_pool};
 
@@ -20,7 +21,15 @@ async fn main() -> anyhow::Result<()> {
     let pg = create_pool(&cfg.postgres).await?;
     let redis = create_connection_manager(&cfg.redis).await?;
 
-    let state = AppState { pg, redis };
+    let moka = MokaCache::new(&cfg.cache.moka);
+    let redis_cache = RedisCache::new(&cfg.cache.redis, redis.clone());
+
+    let state = AppState {
+        pg,
+        redis,
+        moka,
+        redis_cache,
+    };
     let app = app_router(state).layer(TimeoutLayer::with_status_code(
         StatusCode::REQUEST_TIMEOUT,
         Duration::from_secs(cfg.server.request_timeout_secs),

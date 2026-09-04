@@ -1,6 +1,7 @@
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
+use super::cache::CacheConfig;
 use super::database::PostgresConfig;
 use super::redis::RedisConfig;
 use super::server::ServerConfig;
@@ -10,6 +11,8 @@ pub struct AppConfig {
     pub server: ServerConfig,
     pub postgres: PostgresConfig,
     pub redis: RedisConfig,
+    #[serde(default)]
+    pub cache: CacheConfig,
 }
 
 impl AppConfig {
