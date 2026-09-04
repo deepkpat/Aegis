@@ -32,3 +32,10 @@ slindow:
 
 coalescer:
   enabled: true
+
+deduper:
+  enabled: true
+  key_prefix: "aegis:idem:"
+  ttl_secs: 86400
+  header: "idempotency-key"
+  require_key: true

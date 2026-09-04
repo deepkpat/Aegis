@@ -6,12 +6,14 @@ use axum::{
 use redis::aio::ConnectionManager;
 use sqlx::PgPool;
 
+use super::deduper::deduper_middleware;
 use super::health::{health, ready};
 use super::records::{create_record, delete_record, get_record, patch_record, put_record};
 use super::slindow::slindow_middleware;
 use crate::cache::{MokaCache, RedisCache};
 use crate::coalescer::Coalescer;
 use crate::db::Record;
+use crate::deduper::Deduper;
 use crate::limiters::SlindowLimiter;
 
 use super::errors::ApiError;
@@ -24,6 +26,7 @@ pub struct AppState {
     pub redis_cache: Option<RedisCache>,
     pub limiter: Option<SlindowLimiter>,
     pub coalescer: Option<Coalescer<Record, ApiError>>,
+    pub deduper: Option<Deduper>,
 }
 
 impl FromRef<AppState> for PgPool {
@@ -62,6 +65,12 @@ impl FromRef<AppState> for Option<Coalescer<Record, ApiError>> {
     }
 }
 
+impl FromRef<AppState> for Option<Deduper> {
+    fn from_ref(state: &AppState) -> Self {
+        state.deduper.clone()
+    }
+}
+
 pub fn app_router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
@@ -74,6 +83,10 @@ pub fn app_router(state: AppState) -> Router {
                 .patch(patch_record)
                 .delete(delete_record),
         )
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            deduper_middleware,
+        ))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             slindow_middleware,

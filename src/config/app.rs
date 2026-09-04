@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use super::cache::CacheConfig;
 use super::coalescer::CoalescerConfig;
 use super::database::PostgresConfig;
+use super::deduper::DeduperConfig;
 use super::redis::RedisConfig;
 use super::server::ServerConfig;
 use super::slindow::SlindowConfig;
@@ -16,6 +17,7 @@ pub struct AppConfig {
     pub cache: CacheConfig,
     pub slindow: SlindowConfig,
     pub coalescer: CoalescerConfig,
+    pub deduper: DeduperConfig,
 }
 
 impl AppConfig {
