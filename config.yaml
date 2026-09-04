@@ -22,3 +22,9 @@ cache:
     enabled: true
     ttl_secs: 512
     key_prefix: "aegis:records:"
+
+slindow:
+  enabled: true
+  requests_per_window: 1024
+  window_secs: 60
+  key_prefix: "aegis:ratelimit:"

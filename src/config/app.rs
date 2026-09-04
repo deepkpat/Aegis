@@ -5,6 +5,7 @@ use super::cache::CacheConfig;
 use super::database::PostgresConfig;
 use super::redis::RedisConfig;
 use super::server::ServerConfig;
+use super::slindow::SlindowConfig;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AppConfig {
@@ -12,6 +13,7 @@ pub struct AppConfig {
     pub postgres: PostgresConfig,
     pub redis: RedisConfig,
     pub cache: CacheConfig,
+    pub slindow: SlindowConfig,
 }
 
 impl AppConfig {
