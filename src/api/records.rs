@@ -5,7 +5,7 @@ use axum::{
 };
 
 use super::errors::ApiError;
-use super::models::{CreateRecordRequest, PatchRecordRequest};
+use super::models::{CreateRecordRequest, PatchRecordRequest, PutRecordRequest};
 use super::router::AppState;
 use crate::db::Record;
 
@@ -133,6 +133,28 @@ pub async fn patch_record(
             ))
         },
     ))
+}
+
+pub async fn put_record(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<PutRecordRequest>,
+) -> Result<(StatusCode, Json<Record>), ApiError> {
+    validate_id(&id)?;
+    let rec = sqlx::query_as::<_, Record>(
+        "INSERT INTO records (id, payload) VALUES ($1, $2) ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload, version = records.version + 1 RETURNING id, payload, version, created_at, updated_at",
+    )
+    .bind(&id)
+    .bind(body.payload)
+    .fetch_one(&state.pg)
+    .await?;
+    fill_caches(&state, &rec).await;
+    let status = if rec.version == 1 {
+        StatusCode::CREATED
+    } else {
+        StatusCode::OK
+    };
+    Ok((status, Json(rec)))
 }
 
 pub async fn delete_record(

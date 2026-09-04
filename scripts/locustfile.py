@@ -16,6 +16,7 @@ CONFIG = {
     "hotspot_n": 500,
     "read_pct": 80.0,
     "patch_pct": 12.0,
+    "put_pct": 2.0,
     "create_pct": 5.0,
     "delete_pct": 0.0,
     "min_wait_s": 0.01,
@@ -89,12 +90,15 @@ class ApiUser(FastHttpUser):
         roll = random.random() * 100.0
         read = CONFIG["read_pct"]
         patch = read + CONFIG["patch_pct"]
-        create = patch + CONFIG["create_pct"]
+        put = patch + CONFIG["put_pct"]
+        create = put + CONFIG["create_pct"]
         delete = create + CONFIG["delete_pct"]
         if roll < read:
             self.do_get()
         elif roll < patch:
             self.do_patch()
+        elif roll < put:
+            self.do_put()
         elif roll < create:
             self.do_create()
         elif roll < delete:
@@ -146,6 +150,25 @@ class ApiUser(FastHttpUser):
                 r.success()
             else:
                 r.failure(f"PATCH {r.status_code}: {(r.text or "")[:200]}")
+
+    def do_put(self):
+        kid, _ = pick_key()
+        payload = {"data": "x" * max(0, CONFIG["payload_bytes"]), "upd": uuid.uuid4().hex[:8]}
+        with self.client.put(
+            f"/v1/records/{kid}",
+            json={"payload": payload},
+            catch_response=True,
+        ) as r:
+            if r.status_code in (200, 201):
+                try:
+                    self.versions[kid] = r.json()["version"]
+                except (ValueError, KeyError):
+                    pass
+                r.success()
+            elif r.status_code == 400:
+                r.success()
+            else:
+                r.failure(f"PUT {r.status_code}: {(r.text or '')[:200]}")
 
     def do_create(self):
         kid = f"{CONFIG['key_prefix']}-new-{uuid.uuid4().hex[:12]}"

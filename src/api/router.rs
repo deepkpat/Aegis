@@ -7,7 +7,7 @@ use redis::aio::ConnectionManager;
 use sqlx::PgPool;
 
 use super::health::{health, ready};
-use super::records::{create_record, delete_record, get_record, patch_record};
+use super::records::{create_record, delete_record, get_record, patch_record, put_record};
 use super::slindow::slindow_middleware;
 use crate::cache::{MokaCache, RedisCache};
 use crate::coalescer::Coalescer;
@@ -69,7 +69,10 @@ pub fn app_router(state: AppState) -> Router {
         .route("/v1/records", post(create_record))
         .route(
             "/v1/records/{id}",
-            get(get_record).patch(patch_record).delete(delete_record),
+            get(get_record)
+                .put(put_record)
+                .patch(patch_record)
+                .delete(delete_record),
         )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),

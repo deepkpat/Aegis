@@ -11,3 +11,8 @@ pub struct PatchRecordRequest {
     pub payload: serde_json::Value,
     pub expected_version: i32,
 }
+
+#[derive(Debug, Deserialize)]
+pub struct PutRecordRequest {
+    pub payload: serde_json::Value,
+}
