@@ -28,7 +28,7 @@ pub async fn create_record(
     let rec = sqlx::query_as::<_, Record>(
         "INSERT INTO records (id, payload) VALUES ($1, $2) RETURNING id, payload, version, created_at, updated_at",
     )
-    .bind(id.clone())
+    .bind(&id)
     .bind(payload)
     .fetch_one(&pool)
     .await
@@ -75,7 +75,7 @@ pub async fn patch_record(
     {
         return Ok(Json(rec));
     }
-    let current: Option<i32> = sqlx::query_scalar("SELECT version FROM records WHERE id = $1")
+    let current = sqlx::query_scalar::<_, i32>("SELECT version FROM records WHERE id = $1")
         .bind(&id)
         .fetch_optional(&pool)
         .await?;

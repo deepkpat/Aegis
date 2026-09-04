@@ -9,6 +9,7 @@ pub struct ServerConfig {
 }
 
 impl ServerConfig {
+    #[must_use]
     pub fn addr(&self) -> String {
         format!("{}:{}", self.host, self.port)
     }
