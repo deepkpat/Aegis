@@ -83,13 +83,11 @@ pub async fn get_record(
     .bind(&id)
     .fetch_optional(&state.pg)
     .await?;
-    match rec {
-        Some(rec) => {
-            fill_caches(&state, &rec).await;
-            Ok(Json(rec))
-        }
-        None => Err(ApiError::NotFound(format!("Record '{id}' does not exist"))),
-    }
+    let Some(rec) = rec else {
+        return Err(ApiError::NotFound(format!("Record '{id}' does not exist")));
+    };
+    fill_caches(&state, &rec).await;
+    Ok(Json(rec))
 }
 
 pub async fn patch_record(
@@ -117,12 +115,14 @@ pub async fn patch_record(
         .bind(&id)
         .fetch_optional(&state.pg)
         .await?;
-    match current {
-        None => Err(ApiError::NotFound(format!("Record '{id}' does not exist"))),
-        Some(v) => Err(ApiError::VersionMismatch(format!(
-            "Current version is {v}, but expected version was {expected_version}"
-        ))),
-    }
+    Err(current.map_or_else(
+        || ApiError::NotFound(format!("Record '{id}' does not exist")),
+        |v| {
+            ApiError::VersionMismatch(format!(
+                "Current version is {v}, but expected version was {expected_version}"
+            ))
+        },
+    ))
 }
 
 pub async fn delete_record(

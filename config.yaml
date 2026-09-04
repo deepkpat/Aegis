@@ -15,10 +15,10 @@ redis:
 cache:
   moka:
     enabled: true
-    max_capacity: 10000
-    time_to_live_secs: 300
-    time_to_idle_secs: 60
+    max_capacity: 4096
+    time_to_live_secs: 256
+    time_to_idle_secs: 64
   redis:
     enabled: true
-    ttl_secs: 600
+    ttl_secs: 512
     key_prefix: "aegis:records:"

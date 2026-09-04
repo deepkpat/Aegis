@@ -11,7 +11,6 @@ pub struct AppConfig {
     pub server: ServerConfig,
     pub postgres: PostgresConfig,
     pub redis: RedisConfig,
-    #[serde(default)]
     pub cache: CacheConfig,
 }
 

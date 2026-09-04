@@ -11,6 +11,7 @@ pub struct MokaCache {
 }
 
 impl MokaCache {
+    #[must_use]
     pub fn new(cfg: &MokaConfig) -> Option<Self> {
         if !cfg.enabled {
             return None;

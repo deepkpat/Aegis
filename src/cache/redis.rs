@@ -11,6 +11,7 @@ pub struct RedisCache {
 }
 
 impl RedisCache {
+    #[must_use]
     pub fn new(cfg: &RedisCacheConfig, conn: ConnectionManager) -> Option<Self> {
         if !cfg.enabled {
             return None;
@@ -23,15 +24,14 @@ impl RedisCache {
     }
 
     fn key(&self, id: &str) -> String {
-        format!("{}{}", self.key_prefix, id)
+        format!("{}{id}", self.key_prefix)
     }
 
     pub async fn get(&self, id: &str) -> Option<Record> {
         let key = self.key(id);
         let mut conn = self.conn.clone();
         let raw: Option<String> = conn.get(key).await.ok()?;
-        let s = raw?;
-        serde_json::from_str(&s).ok()
+        serde_json::from_str(&raw?).ok()
     }
 
     pub async fn set(&self, record: &Record) {
