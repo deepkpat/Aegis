@@ -22,8 +22,28 @@ services:
             retries: 4
             start_period: 16s
 
+    # in-memory database
+    redis:
+        image: redis:8.0-alpine
+        container_name: aegis-redis
+        restart: unless-stopped
+        ports:
+            - "6379:6379"
+        networks:
+            - aegis-net
+        volumes:
+            - redis_data:/data
+        command: redis-server --appendonly yes
+        healthcheck:
+            test: ["CMD", "redis-cli", "ping"]
+            interval: 8s
+            timeout: 4s
+            retries: 4
+            start_period: 4s
+
 networks:
     aegis-net:
 
 volumes:
     postgres_data:
+    redis_data:
