@@ -36,7 +36,15 @@ coalescer:
 
 deduper:
   enabled: true
-  key_prefix: "aegis:idem:"
-  ttl_secs: 86400
   header: "idempotency-key"
   require_key: true
+  bloom:
+    enabled: true
+    capacity: 1000000
+    false_positive_rate: 0.0001
+    buckets: 4
+    bucket_ttl_secs: 21600
+  redis:
+    enabled: true
+    key_prefix: "aegis:idem:"
+    ttl_secs: 86400

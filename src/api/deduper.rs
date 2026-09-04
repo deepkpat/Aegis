@@ -1,104 +1,131 @@
-use axum::{
-    Json,
-    body::{Body, to_bytes},
-    extract::{Request, State},
-    http::StatusCode,
-    middleware::Next,
-    response::{IntoResponse, Response},
-};
-use serde_json::json;
+//! Idempotency middleware wiring the `Deduper` into the Axum request path.
+//!
+//! Semantics:
+//! - Fresh key    → execute handler, buffer response, record for replay.
+//! - Replay       → return the stored response without executing.
+//! - In-flight    → 409 Conflict (duplicate while original still running).
+//! - Deduper down → fail-open, execute normally.
 
+use axum::body::{Body, to_bytes};
+use axum::extract::{Request, State};
+use axum::http::StatusCode;
+use axum::http::header::CONTENT_TYPE;
+use axum::middleware::Next;
+use axum::response::{IntoResponse, Response};
+
+use crate::api::router::AppState;
 use crate::deduper::{Claim, Deduper};
 
-fn is_mutating(req: &Request<Body>) -> bool {
-    let m = req.method().as_str();
-    (m == "POST" || m == "PUT" || m == "PATCH") && req.uri().path().starts_with("/v1/")
-}
+/// Cap on response bodies eligible for replay storage. Responses larger
+/// than this still execute, but are not recorded (client retries would
+/// re-execute). Tune for your payload sizes.
+const REPLAY_BODY_LIMIT: usize = 1 << 20; // 1 MiB
 
 pub async fn deduper_middleware(
-    State(deduper): State<Option<Deduper>>,
-    req: Request<Body>,
+    State(state): State<AppState>,
+    request: Request,
     next: Next,
 ) -> Response {
-    let Some(deduper) = deduper else {
-        return next.run(req).await;
+    let Some(deduper) = state.deduper.clone() else {
+        return next.run(request).await;
     };
-    if !is_mutating(&req) {
-        return next.run(req).await;
+
+    let path = request.uri().path().to_owned();
+    if path == "/health" || path == "/ready" {
+        return next.run(request).await;
     }
-    let raw_key = req
+    let method_str = request.method().as_str().to_owned();
+    if !matches!(method_str.as_str(), "POST" | "PUT" | "PATCH") {
+        return next.run(request).await;
+    }
+
+    // 1. Extract and validate the client-supplied idempotency key.
+    let client_key = request
         .headers()
         .get(&deduper.header_name)
         .and_then(|v| v.to_str().ok())
         .map(str::trim)
-        .unwrap_or_default()
-        .to_owned();
-    if raw_key.is_empty() {
-        if !deduper.require_key {
-            return next.run(req).await;
-        }
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "IDEMPOTENCY_KEY_MISSING", "message": "Idempotency-Key header is required"})),
-        )
-            .into_response();
-    }
-    if !Deduper::validate_key(&raw_key) {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "IDEMPOTENCY_KEY_INVALID", "message": "Idempotency-Key must be 1-255 chars"})),
-        )
-            .into_response();
-    }
-    let method = req.method().as_str().to_owned();
-    let path = req.uri().path().to_owned();
-    match deduper.claim(&method, &path, &raw_key).await {
-        None => next.run(req).await,
-        Some(Claim::Replay { status, body }) => {
-            let code = StatusCode::from_u16(status).unwrap_or(StatusCode::OK);
-            (
-                code,
-                [("idempotent-replayed", "true")],
-                Json(serde_json::from_str::<serde_json::Value>(&body).unwrap_or(json!({}))),
+        .filter(|k| Deduper::validate_key(k))
+        .map(str::to_owned);
+
+    let client_key = match client_key {
+        Some(k) => k,
+        None if deduper.require_key => {
+            return (
+                StatusCode::BAD_REQUEST,
+                format!("missing or invalid `{}` header", deduper.header_name),
             )
-                .into_response()
+                .into_response();
         }
-        Some(Claim::InFlight) => (
+        None => return next.run(request).await, // key optional: pass through
+    };
+
+    // 2. Claim. `None` means a deduper subsystem error → fail-open.
+    let Some(claim) = deduper.claim(&method_str, &path, &client_key).await else {
+        return next.run(request).await;
+    };
+
+    match claim {
+        Claim::Replay {
+            status,
+            body,
+            content_type,
+        } => {
+            tracing::debug!(%client_key, "idempotent replay");
+            let status = StatusCode::from_u16(status).unwrap_or(StatusCode::OK);
+            let mut resp = (status, body).into_response();
+            if let Ok(val) = content_type.parse() {
+                resp.headers_mut().insert(CONTENT_TYPE, val);
+            }
+            resp
+        }
+        Claim::InFlight => (
             StatusCode::CONFLICT,
-            Json(
-                json!({"error": "IDEMPOTENT_IN_FLIGHT", "message": "duplicate request in flight"}),
-            ),
+            "a request with this idempotency key is still in flight",
         )
             .into_response(),
-        Some(Claim::Fresh { redis_key }) => {
-            let res = next.run(req).await;
-            let (mut parts, body) = res.into_parts();
-            let Ok(bytes) = to_bytes(body, usize::MAX).await else {
-                deduper.release(&redis_key).await;
+        Claim::Fresh {
+            redis_key,
+            bloom_key,
+        } => {
+            let response = next.run(request).await;
+
+            // Never record server errors: the client is expected to retry.
+            if response.status().is_server_error() {
+                deduper.release(redis_key.as_deref()).await;
+                return response;
+            }
+
+            // Buffer the body so duplicates can be served the stored copy.
+            let (parts, body) = response.into_parts();
+            let Ok(bytes) = to_bytes(body, REPLAY_BODY_LIMIT).await else {
+                deduper.release(redis_key.as_deref()).await;
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(json!({"error": "INTERNAL", "message": "body read failed"})),
+                    "failed to buffer response for idempotency",
                 )
                     .into_response();
             };
-            if parts.status.is_success() {
-                let text = String::from_utf8_lossy(&bytes).into_owned();
-                let ct = parts
-                    .headers
-                    .get("content-type")
-                    .and_then(|v| v.to_str().ok())
-                    .unwrap_or("application/json")
-                    .to_owned();
-                deduper
-                    .complete(&redis_key, parts.status.as_u16(), &text, &ct)
-                    .await;
-            } else {
-                deduper.release(&redis_key).await;
-            }
-            parts.headers.insert(
-                "idempotent-replayed",
-                axum::http::HeaderValue::from_static("false"),
-            );
+
+            let status = parts.status.as_u16();
+            let content_type = parts
+                .headers
+                .get(CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("application/octet-stream")
+                .to_owned();
+            let body_string = String::from_utf8_lossy(&bytes).into_owned();
+
+            deduper
+                .complete(
+                    redis_key.as_deref(),
+                    bloom_key.as_deref(),
+                    status,
+                    &body_string,
+                    &content_type,
+                )
+                .await;
+
             Response::from_parts(parts, Body::from(bytes))
         }
     }

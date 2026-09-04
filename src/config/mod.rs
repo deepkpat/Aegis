@@ -11,7 +11,7 @@ pub use app::AppConfig;
 pub use cache::{CacheConfig, MokaConfig, RedisCacheConfig};
 pub use coalescer::CoalescerConfig;
 pub use database::PostgresConfig;
-pub use deduper::DeduperConfig;
+pub use deduper::{DeduperBloomConfig, DeduperConfig, DeduperRedisConfig};
 pub use redis::RedisConfig;
 pub use server::ServerConfig;
 pub use slindow::SlindowConfig;
