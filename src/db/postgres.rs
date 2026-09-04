@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use sqlx::{PgPool, postgres::PgPoolOptions};
 
-use crate::config::DatabaseConfig;
+use crate::config::PostgresConfig;
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct Record {
@@ -15,7 +15,7 @@ pub struct Record {
     pub updated_at: DateTime<Utc>,
 }
 
-pub async fn create_pool(cfg: &DatabaseConfig) -> anyhow::Result<PgPool> {
+pub async fn create_pool(cfg: &PostgresConfig) -> anyhow::Result<PgPool> {
     Ok(PgPoolOptions::new()
         .max_connections(cfg.max_connections)
         .acquire_timeout(Duration::from_secs(cfg.acquire_timeout_secs))

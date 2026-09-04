@@ -4,6 +4,6 @@ pub mod redis;
 pub mod server;
 
 pub use app::AppConfig;
-pub use database::DatabaseConfig;
+pub use database::PostgresConfig;
 pub use redis::RedisConfig;
 pub use server::ServerConfig;
