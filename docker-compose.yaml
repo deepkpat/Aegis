@@ -15,6 +15,14 @@ services:
         volumes:
             - postgres_data:/var/lib/postgresql/data
             - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+        deploy:
+            resources:
+                limits:
+                    cpus: '4.0'
+                    memory: 2G
+                reservations:
+                    cpus: '1.0'
+                    memory: 512M
         healthcheck:
             test: ["CMD-SHELL", "pg_isready -U aegis -d aegis"]
             interval: 8s
@@ -33,7 +41,15 @@ services:
             - aegis-net
         volumes:
             - redis_data:/data
-        command: redis-server --appendonly yes
+        command: redis-server --appendonly yes --maxmemory 800mb --maxmemory-policy allkeys-lru
+        deploy:
+            resources:
+                limits:
+                    cpus: '2.0'
+                    memory: 1G
+                reservations:
+                    cpus: '0.5'
+                    memory: 256M
         healthcheck:
             test: ["CMD", "redis-cli", "ping"]
             interval: 8s
