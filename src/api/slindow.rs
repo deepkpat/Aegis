@@ -11,6 +11,10 @@ use std::net::SocketAddr;
 
 use crate::limiters::SlindowLimiter;
 
+fn uint_header(value: u32) -> HeaderValue {
+    HeaderValue::from_str(&value.to_string()).unwrap_or_else(|_| HeaderValue::from_static("0"))
+}
+
 fn client_ip(req: &Request<Body>) -> Option<String> {
     if let Some(xff) = req.headers().get("x-forwarded-for")
         && let Ok(v) = xff.to_str()
@@ -43,15 +47,11 @@ pub async fn slindow_middleware(
     let d = limiter.check(&ip).await;
     if d.allowed {
         let mut res = next.run(req).await;
-        res.headers_mut().insert(
-            "x-ratelimit-limit",
-            HeaderValue::from_str(&d.limit.to_string())
-                .unwrap_or_else(|_| HeaderValue::from_static("0")),
-        );
+        res.headers_mut()
+            .insert("x-ratelimit-limit", uint_header(d.limit));
         res.headers_mut().insert(
             "x-ratelimit-remaining",
-            HeaderValue::from_str(&d.limit.saturating_sub(d.count).to_string())
-                .unwrap_or_else(|_| HeaderValue::from_static("0")),
+            uint_header(d.limit.saturating_sub(d.count)),
         );
         return res;
     }

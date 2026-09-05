@@ -255,6 +255,27 @@ pub enum Claim {
     InFlight,
 }
 
+impl Claim {
+    fn from_redis(claim: RedisClaim, bloom_key: Option<String>) -> Self {
+        match claim {
+            RedisClaim::Fresh { redis_key } => Self::Fresh {
+                redis_key: Some(redis_key),
+                bloom_key,
+            },
+            RedisClaim::Replay {
+                status,
+                body,
+                content_type,
+            } => Self::Replay {
+                status,
+                body,
+                content_type,
+            },
+            RedisClaim::InFlight => Self::InFlight,
+        }
+    }
+}
+
 impl Deduper {
     #[must_use]
     pub fn new(cfg: &DeduperConfig, conn: ConnectionManager) -> Option<Self> {
@@ -299,22 +320,8 @@ impl Deduper {
         {
             tracing::debug!(%client_key, "bloom miss, skipping redis read");
             if let Some(redis) = &self.redis {
-                return match redis.claim(method, path, client_key).await? {
-                    RedisClaim::Fresh { redis_key } => Some(Claim::Fresh {
-                        redis_key: Some(redis_key),
-                        bloom_key: Some(client_key.to_owned()),
-                    }),
-                    RedisClaim::Replay {
-                        status,
-                        body,
-                        content_type,
-                    } => Some(Claim::Replay {
-                        status,
-                        body,
-                        content_type,
-                    }),
-                    RedisClaim::InFlight => Some(Claim::InFlight),
-                };
+                let redis_claim = redis.claim(method, path, client_key).await?;
+                return Some(Claim::from_redis(redis_claim, Some(client_key.to_owned())));
             }
             return Some(Claim::Fresh {
                 redis_key: None,
@@ -323,22 +330,11 @@ impl Deduper {
         }
 
         let redis = self.redis.as_ref()?;
-        match redis.claim(method, path, client_key).await? {
-            RedisClaim::Fresh { redis_key } => Some(Claim::Fresh {
-                redis_key: Some(redis_key),
-                bloom_key: self.bloom.as_ref().map(|_| client_key.to_owned()),
-            }),
-            RedisClaim::Replay {
-                status,
-                body,
-                content_type,
-            } => Some(Claim::Replay {
-                status,
-                body,
-                content_type,
-            }),
-            RedisClaim::InFlight => Some(Claim::InFlight),
-        }
+        let redis_claim = redis.claim(method, path, client_key).await?;
+        Some(Claim::from_redis(
+            redis_claim,
+            self.bloom.as_ref().map(|_| client_key.to_owned()),
+        ))
     }
 
     pub async fn complete(

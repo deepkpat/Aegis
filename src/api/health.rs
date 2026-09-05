@@ -15,19 +15,19 @@ pub async fn ready(
         redis.ping::<String>().await
     });
 
-    match (pg_ok, redis_ok) {
-        (Ok(_), Ok(_)) => (StatusCode::OK, Json(json!({"status": "ready"}))),
-        (Err(pg_e), Err(redis_e)) => (
+    match (pg_ok.err(), redis_ok.err()) {
+        (None, None) => (StatusCode::OK, Json(json!({"status": "ready"}))),
+        (Some(pg_e), Some(redis_e)) => (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(
                 json!({"status": "not-ready", "postgres": pg_e.to_string(), "redis": redis_e.to_string()}),
             ),
         ),
-        (Err(e), _) => (
+        (Some(e), None) => (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(json!({"status": "not-ready", "postgres": e.to_string()})),
         ),
-        (_, Err(e)) => (
+        (None, Some(e)) => (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(json!({"status": "not-ready", "redis": e.to_string()})),
         ),
