@@ -29,6 +29,7 @@ pub struct DeduperRedis {
     conn: ConnectionManager,
     key_prefix: String,
     ttl_secs: u64,
+    inflight_ttl_secs: u64,
 }
 
 pub enum RedisClaim {
@@ -49,6 +50,11 @@ impl DeduperRedis {
             conn,
             key_prefix: cfg.key_prefix.clone(),
             ttl_secs: cfg.ttl_secs,
+            // The in-flight lock must expire quickly so a crashed holder
+            // stops blocking retries; the completed record keeps the long
+            // replay TTL. Never let a misconfiguration wedge keys for the
+            // full replay window (note.md §1.1).
+            inflight_ttl_secs: cfg.inflight_ttl_secs.clamp(1, cfg.ttl_secs.max(1)),
         }
     }
 
@@ -69,6 +75,34 @@ impl DeduperRedis {
         serde_json::from_str(&raw?).ok()
     }
 
+    async fn set_inflight(&self, redis_key: &str) -> redis::RedisResult<Option<String>> {
+        let inflight = serde_json::to_string(&Stored::Inflight).unwrap_or_default();
+        let mut conn = self.conn.clone();
+        redis::cmd("SET")
+            .arg(redis_key)
+            .arg(inflight)
+            .arg("NX")
+            .arg("EX")
+            .arg(self.inflight_ttl_secs)
+            .query_async(&mut conn)
+            .await
+    }
+
+    async fn resolve_race(&self, redis_key: &str) -> RedisClaim {
+        match self.get(redis_key).await {
+            Some(Stored::Complete {
+                status,
+                body,
+                content_type,
+            }) => RedisClaim::Replay {
+                status,
+                body,
+                content_type,
+            },
+            _ => RedisClaim::InFlight,
+        }
+    }
+
     pub async fn claim(&self, method: &str, path: &str, client_key: &str) -> Option<RedisClaim> {
         let redis_key = self.redis_key(method, path, client_key);
         if let Some(stored) = self.get(&redis_key).await {
@@ -87,30 +121,26 @@ impl DeduperRedis {
                 Stored::Inflight => return Some(RedisClaim::InFlight),
             }
         }
-        let inflight = serde_json::to_string(&Stored::Inflight).unwrap_or_default();
-        let mut conn = self.conn.clone();
-        let set: redis::RedisResult<Option<String>> = redis::cmd("SET")
-            .arg(&redis_key)
-            .arg(inflight)
-            .arg("NX")
-            .arg("EX")
-            .arg(self.ttl_secs)
-            .query_async(&mut conn)
-            .await;
-        match set {
+        match self.set_inflight(&redis_key).await {
             Ok(Some(_)) => Some(RedisClaim::Fresh { redis_key }),
-            Ok(None) => match self.get(&redis_key).await {
-                Some(Stored::Complete {
-                    status,
-                    body,
-                    content_type,
-                }) => Some(RedisClaim::Replay {
-                    status,
-                    body,
-                    content_type,
-                }),
-                _ => Some(RedisClaim::InFlight),
-            },
+            Ok(None) => Some(self.resolve_race(&redis_key).await),
+            Err(e) => {
+                tracing::warn!(error = %e, "deduper redis claim failed, fail-open");
+                None
+            }
+        }
+    }
+
+    /// Fast path for a definitive Bloom miss (`note.md` §1.2): the key was
+    /// definitely never completed, so there is no stored response to find —
+    /// skip the `GET` and go straight to `SET NX EX inflight_ttl`. A lost
+    /// race (another request claimed concurrently) falls back to a single
+    /// `GET` to distinguish replay from in-flight.
+    pub async fn claim_fresh(&self, method: &str, path: &str, client_key: &str) -> Option<RedisClaim> {
+        let redis_key = self.redis_key(method, path, client_key);
+        match self.set_inflight(&redis_key).await {
+            Ok(Some(_)) => Some(RedisClaim::Fresh { redis_key }),
+            Ok(None) => Some(self.resolve_race(&redis_key).await),
             Err(e) => {
                 tracing::warn!(error = %e, "deduper redis claim failed, fail-open");
                 None
@@ -313,14 +343,14 @@ impl Deduper {
     pub async fn claim(&self, method: &str, path: &str, client_key: &str) -> Option<Claim> {
         // Bloom gate: a definitive miss means the key cannot be a replay of
         // a completed request, so we skip the Redis read and go straight to
-        // lock acquisition. Concurrent in-flight duplicates are still caught
-        // by the SET NX below.
+        // lock acquisition via `claim_fresh` (SET NX only). Concurrent
+        // in-flight duplicates are still caught by the SET NX below.
         if let Some(bloom) = &self.bloom
             && !bloom.maybe_contains(client_key).await
         {
             tracing::debug!(%client_key, "bloom miss, skipping redis read");
             if let Some(redis) = &self.redis {
-                let redis_claim = redis.claim(method, path, client_key).await?;
+                let redis_claim = redis.claim_fresh(method, path, client_key).await?;
                 return Some(Claim::from_redis(redis_claim, Some(client_key.to_owned())));
             }
             return Some(Claim::Fresh {

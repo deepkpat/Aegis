@@ -2,7 +2,7 @@ use aegis::api::router::{AppState, app_router};
 use aegis::cache::{CompositeCache, spawn_invalidation_listener};
 use aegis::coalescer::Coalescer;
 use aegis::config::AppConfig;
-use aegis::db::{create_connection_manager, create_pool};
+use aegis::db::{create_cache_connection_manager, create_connection_manager, create_pool};
 use aegis::deduper::Deduper;
 use aegis::limiters::SlindowLimiter;
 
@@ -23,8 +23,9 @@ async fn main() -> anyhow::Result<()> {
     let cfg = AppConfig::from_file("config.yaml")?;
     let pg = create_pool(&cfg.postgres).await?;
     let redis = create_connection_manager(&cfg.redis).await?;
+    let redis_cache = create_cache_connection_manager(&cfg.redis).await?;
 
-    let cache = CompositeCache::new(&cfg.cache, redis.clone());
+    let cache = CompositeCache::new(&cfg.cache, redis_cache.clone());
     let limiter = SlindowLimiter::new(&cfg.slindow, redis.clone());
     let coalescer = Coalescer::new(&cfg.coalescer);
     let deduper = Deduper::new(&cfg.deduper, redis.clone());
@@ -43,6 +44,7 @@ async fn main() -> anyhow::Result<()> {
     let state = AppState {
         pg,
         redis,
+        redis_cache,
         cache,
         limiter,
         coalescer,

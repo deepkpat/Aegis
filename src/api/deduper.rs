@@ -8,6 +8,7 @@
 
 use axum::body::{Body, to_bytes};
 use axum::extract::{Request, State};
+use axum::http::HeaderValue;
 use axum::http::StatusCode;
 use axum::http::header::CONTENT_TYPE;
 use axum::middleware::Next;
@@ -20,6 +21,12 @@ use crate::deduper::{Claim, Deduper};
 /// than this still execute, but are not recorded (client retries would
 /// re-execute). Tune for your payload sizes.
 const REPLAY_BODY_LIMIT: usize = 1 << 20; // 1 MiB
+
+/// Hard cap for buffering a response body in memory so the original bytes
+/// can be returned even when they exceed `REPLAY_BODY_LIMIT` (note.md §1.5).
+/// Only reached by absurdly large record payloads; beyond this we give up
+/// with a 500 rather than risk unbounded memory growth.
+const BUFFER_BODY_LIMIT: usize = 16 << 20; // 16 MiB
 
 pub async fn deduper_middleware(
     State(state): State<AppState>,
@@ -75,6 +82,8 @@ pub async fn deduper_middleware(
             if let Ok(val) = content_type.parse() {
                 resp.headers_mut().insert(CONTENT_TYPE, val);
             }
+            resp.headers_mut()
+                .insert("idempotent-replayed", HeaderValue::from_static("true"));
             resp
         }
         Claim::InFlight => (
@@ -95,8 +104,10 @@ pub async fn deduper_middleware(
             }
 
             // Buffer the body so duplicates can be served the stored copy.
+            // Buffer up to a generous hard cap so that a response larger
+            // than REPLAY_BODY_LIMIT can still be returned intact below.
             let (parts, body) = response.into_parts();
-            let Ok(bytes) = to_bytes(body, REPLAY_BODY_LIMIT).await else {
+            let Ok(bytes) = to_bytes(body, BUFFER_BODY_LIMIT).await else {
                 deduper.release(redis_key.as_deref()).await;
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -104,6 +115,25 @@ pub async fn deduper_middleware(
                 )
                     .into_response();
             };
+
+            // Bodies too large to store were still executed: release the
+            // claim (nothing to replay, so no reason to hold it) and return
+            // the real response with an explicit signal that a retry would
+            // re-execute (note.md §1.5). Deliberately *not* recorded in the
+            // Bloom filter either, keeping "bloom contains key" truthful
+            // about "Redis holds a replayable record".
+            if bytes.len() > REPLAY_BODY_LIMIT {
+                tracing::warn!(
+                    %client_key,
+                    bytes = bytes.len(),
+                    "response exceeds replay limit, returning without idempotency record"
+                );
+                deduper.release(redis_key.as_deref()).await;
+                let mut resp = Response::from_parts(parts, Body::from(bytes));
+                resp.headers_mut()
+                    .insert("idempotency-stored", HeaderValue::from_static("none"));
+                return resp;
+            }
 
             let status = parts.status.as_u16();
             let content_type = parts

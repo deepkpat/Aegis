@@ -7,29 +7,43 @@ pub async fn health() -> Json<Value> {
     Json(json!({"status": "healthy"}))
 }
 
+use super::router::CacheRedis;
+
 pub async fn ready(
     State(pg): State<PgPool>,
     State(mut redis): State<ConnectionManager>,
+    State(CacheRedis(mut redis_cache)): State<CacheRedis>,
 ) -> (StatusCode, Json<Value>) {
-    let (pg_ok, redis_ok) = tokio::join!(sqlx::query("SELECT 1").execute(&pg), async {
-        redis.ping::<String>().await
-    });
+    // Gate on all three: Postgres plus each Redis instance, reported under
+    // distinct keys so a cache-only outage (`redis_cache`) is identifiable
+    // rather than lumped in with the durable instance (`redis`). In
+    // single-instance mode both handles point at the same server, so this
+    // degrades to the old two-dependency check.
+    let (pg_res, redis_res, cache_res) = tokio::join!(
+        sqlx::query("SELECT 1").execute(&pg),
+        async { redis.ping::<String>().await },
+        async { redis_cache.ping::<String>().await },
+    );
 
-    match (pg_ok.err(), redis_ok.err()) {
-        (None, None) => (StatusCode::OK, Json(json!({"status": "ready"}))),
-        (Some(pg_e), Some(redis_e)) => (
+    let mut failures = serde_json::Map::new();
+    if let Err(e) = pg_res {
+        failures.insert("postgres".to_owned(), json!(e.to_string()));
+    }
+    if let Err(e) = redis_res {
+        failures.insert("redis".to_owned(), json!(e.to_string()));
+    }
+    if let Err(e) = cache_res {
+        failures.insert("redis_cache".to_owned(), json!(e.to_string()));
+    }
+
+    if failures.is_empty() {
+        (StatusCode::OK, Json(json!({"status": "ready"})))
+    } else {
+        let mut body = serde_json::Map::from_iter([("status".to_owned(), json!("not-ready"))]);
+        body.extend(failures);
+        (
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(
-                json!({"status": "not-ready", "postgres": pg_e.to_string(), "redis": redis_e.to_string()}),
-            ),
-        ),
-        (Some(e), None) => (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(json!({"status": "not-ready", "postgres": e.to_string()})),
-        ),
-        (None, Some(e)) => (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(json!({"status": "not-ready", "redis": e.to_string()})),
-        ),
+            Json(Value::Object(body)),
+        )
     }
 }

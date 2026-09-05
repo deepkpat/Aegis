@@ -22,6 +22,10 @@ use super::errors::ApiError;
 pub struct AppState {
     pub pg: PgPool,
     pub redis: ConnectionManager,
+    /// Connection to the evictable cache-L2 instance (or a second handle on
+    /// the shared instance in single-instance mode). Carried separately from
+    /// `redis` so `/ready` can report on each instance independently.
+    pub redis_cache: ConnectionManager,
     pub cache: Option<CompositeCache>,
     pub limiter: Option<SlindowLimiter>,
     pub coalescer: Option<Coalescer<Record, ApiError>>,
@@ -38,6 +42,17 @@ impl FromRef<AppState> for PgPool {
 impl FromRef<AppState> for ConnectionManager {
     fn from_ref(state: &AppState) -> Self {
         state.redis.clone()
+    }
+}
+
+/// Newtype so handlers can extract the cache-L2 connection alongside the
+/// primary one (Axum `FromRef` can't provide the same type twice).
+#[derive(Clone)]
+pub struct CacheRedis(pub ConnectionManager);
+
+impl FromRef<AppState> for CacheRedis {
+    fn from_ref(state: &AppState) -> Self {
+        Self(state.redis_cache.clone())
     }
 }
 

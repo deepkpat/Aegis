@@ -30,7 +30,9 @@ services:
             retries: 4
             start_period: 16s
 
-    # in-memory database
+    # durable store: idempotency claims, rate-limit windows, pub/sub.
+    # noeviction turns memory pressure into loud write errors (fail-open)
+    # instead of silently evicting correctness-critical keys (note.md §1.4).
     redis:
         image: redis:8.0-alpine
         container_name: aegis-redis
@@ -41,7 +43,34 @@ services:
             - aegis-net
         volumes:
             - redis_data:/data
-        command: redis-server --appendonly yes --maxmemory 800mb --maxmemory-policy allkeys-lru
+        command: redis-server --appendonly yes --maxmemory 800mb --maxmemory-policy noeviction
+        deploy:
+            resources:
+                limits:
+                    cpus: '2.0'
+                    memory: 1G
+                reservations:
+                    cpus: '0.5'
+                    memory: 256M
+        healthcheck:
+            test: ["CMD", "redis-cli", "ping"]
+            interval: 8s
+            timeout: 4s
+            retries: 4
+            start_period: 4s
+
+    # evictable cache L2 only. No persistence (a cold cache just misses);
+    # allkeys-lru is the correct policy here, isolated from the durable
+    # instance above.
+    redis-cache:
+        image: redis:8.0-alpine
+        container_name: aegis-redis-cache
+        restart: unless-stopped
+        ports:
+            - "6380:6379"
+        networks:
+            - aegis-net
+        command: redis-server --maxmemory 800mb --maxmemory-policy allkeys-lru
         deploy:
             resources:
                 limits:
