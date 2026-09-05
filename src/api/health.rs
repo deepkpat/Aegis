@@ -3,22 +3,18 @@ use redis::{AsyncCommands, aio::ConnectionManager};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 
+use super::router::CacheRedis;
+
 pub async fn health() -> Json<Value> {
     Json(json!({"status": "healthy"}))
 }
-
-use super::router::CacheRedis;
 
 pub async fn ready(
     State(pg): State<PgPool>,
     State(mut redis): State<ConnectionManager>,
     State(CacheRedis(mut redis_cache)): State<CacheRedis>,
 ) -> (StatusCode, Json<Value>) {
-    // Gate on all three: Postgres plus each Redis instance, reported under
-    // distinct keys so a cache-only outage (`redis_cache`) is identifiable
-    // rather than lumped in with the durable instance (`redis`). In
-    // single-instance mode both handles point at the same server, so this
-    // degrades to the old two-dependency check.
+    // In single-instance mode both handles point at the same server.
     let (pg_res, redis_res, cache_res) = tokio::join!(
         sqlx::query("SELECT 1").execute(&pg),
         async { redis.ping::<String>().await },
@@ -41,9 +37,6 @@ pub async fn ready(
     } else {
         let mut body = serde_json::Map::from_iter([("status".to_owned(), json!("not-ready"))]);
         body.extend(failures);
-        (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(Value::Object(body)),
-        )
+        (StatusCode::SERVICE_UNAVAILABLE, Json(Value::Object(body)))
     }
 }

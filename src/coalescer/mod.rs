@@ -13,6 +13,7 @@ pub struct Coalescer<T, E> {
     inflight: Inflight<T, E>,
 }
 
+// Manual Clone avoids adding a Clone bound on T and E.
 impl<T, E> Clone for Coalescer<T, E> {
     fn clone(&self) -> Self {
         Self {
@@ -55,7 +56,6 @@ where
                     let _ = tx.send(result.clone());
                 }
                 guard.remove(key);
-                drop(guard);
                 return result;
             }
         };
@@ -73,8 +73,8 @@ where
     {
         loop {
             match rx.recv().await {
-                Ok(v) => return v,
-                Err(broadcast::error::RecvError::Lagged(_)) => {}
+                Ok(value) => return value,
+                Err(broadcast::error::RecvError::Lagged(_)) => continue,
                 Err(broadcast::error::RecvError::Closed) => {
                     tracing::warn!(key = %key, "coalescer leader dropped, fail-open");
                     return fut().await;

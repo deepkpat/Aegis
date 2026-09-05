@@ -9,6 +9,8 @@ use super::models::{CreateRecordRequest, PatchRecordRequest, PutRecordRequest};
 use super::router::AppState;
 use crate::db::Record;
 
+const UNIQUE_VIOLATION: &str = "23505";
+
 fn validate_id(id: &str) -> Result<(), ApiError> {
     if id.trim().is_empty() {
         return Err(ApiError::BadRequest("id must not be empty".into()));
@@ -19,19 +21,19 @@ fn validate_id(id: &str) -> Result<(), ApiError> {
     Ok(())
 }
 
-async fn fill_caches(state: &AppState, record: &Record) {
+async fn fill_cache(state: &AppState, record: &Record) {
     if let Some(cache) = &state.cache {
         cache.insert(record).await;
     }
 }
 
-async fn invalidate_caches(state: &AppState, id: &str) {
+async fn invalidate_cache(state: &AppState, id: &str) {
     if let Some(cache) = &state.cache {
         cache.invalidate(id).await;
     }
 }
 
-async fn broadcast_invalidation(state: &AppState, id: &str) {
+async fn broadcast(state: &AppState, id: &str) {
     if let Some(channel) = &state.invalidation_channel {
         crate::cache::publish_invalidation(&state.redis, channel, id).await;
     }
@@ -51,13 +53,13 @@ pub async fn create_record(
     .fetch_one(&state.pg)
     .await
     .map_err(|e| match &e {
-        sqlx::Error::Database(db) if db.code().as_deref() == Some("23505") => {
+        sqlx::Error::Database(db) if db.code().as_deref() == Some(UNIQUE_VIOLATION) => {
             ApiError::Conflict(format!("Record with ID '{id}' already exists"))
         }
         _ => ApiError::from(e),
     })?;
-    fill_caches(&state, &rec).await;
-    broadcast_invalidation(&state, &rec.id).await;
+    fill_cache(&state, &rec).await;
+    broadcast(&state, &rec.id).await;
     Ok((StatusCode::CREATED, Json(rec)))
 }
 
@@ -71,7 +73,7 @@ async fn fetch_pg(state: &AppState, id: &str) -> Result<Record, ApiError> {
     let Some(rec) = rec else {
         return Err(ApiError::NotFound(format!("Record '{id}' does not exist")));
     };
-    fill_caches(state, &rec).await;
+    fill_cache(state, &rec).await;
     Ok(rec)
 }
 
@@ -111,8 +113,8 @@ pub async fn patch_record(
     .fetch_optional(&state.pg)
     .await?
     {
-        fill_caches(&state, &rec).await;
-        broadcast_invalidation(&state, &rec.id).await;
+        fill_cache(&state, &rec).await;
+        broadcast(&state, &rec.id).await;
         return Ok(Json(rec));
     }
     let current = sqlx::query_scalar::<_, i32>("SELECT version FROM records WHERE id = $1")
@@ -140,11 +142,12 @@ pub async fn put_record(
     .bind(body.payload)
     .fetch_one(&state.pg)
     .await?;
-    fill_caches(&state, &rec).await;
-    broadcast_invalidation(&state, &rec.id).await;
-    let status = match rec.version {
-        1 => StatusCode::CREATED,
-        _ => StatusCode::OK,
+    fill_cache(&state, &rec).await;
+    broadcast(&state, &rec.id).await;
+    let status = if rec.version == 1 {
+        StatusCode::CREATED
+    } else {
+        StatusCode::OK
     };
     Ok((status, Json(rec)))
 }
@@ -160,7 +163,7 @@ pub async fn delete_record(
     if res.rows_affected() == 0 {
         return Err(ApiError::NotFound(format!("Record '{id}' does not exist")));
     }
-    invalidate_caches(&state, &id).await;
-    broadcast_invalidation(&state, &id).await;
+    invalidate_cache(&state, &id).await;
+    broadcast(&state, &id).await;
     Ok(StatusCode::NO_CONTENT)
 }

@@ -35,10 +35,10 @@ async fn main() -> anyhow::Result<()> {
         .invalidation
         .enabled
         .then(|| cfg.cache.invalidation.channel.clone());
-    if let (Some(channel), Some(c)) = (&invalidation_channel, &cache)
-        && c.has_l1()
+    if let (Some(channel), Some(cache)) = (&invalidation_channel, &cache)
+        && cache.has_l1()
     {
-        spawn_invalidation_listener(cfg.redis.url.clone(), channel.clone(), c.clone());
+        spawn_invalidation_listener(cfg.redis.url.clone(), channel.clone(), cache.clone());
     }
 
     let state = AppState {

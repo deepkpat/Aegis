@@ -32,13 +32,11 @@ impl SlindowLimiter {
         if !cfg.enabled {
             return None;
         }
-        let script = match std::fs::read_to_string(&cfg.script_path) {
-            Ok(src) => src,
-            Err(e) => {
-                tracing::warn!(path = %cfg.script_path.display(), error = %e, "slindow script not readable, using embedded script");
-                SLINDOW_SCRIPT.to_owned()
-            }
-        };
+        // Fall back to the embedded script when the configured path is unreadable.
+        let script = std::fs::read_to_string(&cfg.script_path).unwrap_or_else(|e| {
+            tracing::warn!(path = %cfg.script_path.display(), error = %e, "using embedded slindow script");
+            SLINDOW_SCRIPT.to_owned()
+        });
         Some(Self {
             conn,
             key_prefix: cfg.key_prefix.clone(),
@@ -53,9 +51,7 @@ impl SlindowLimiter {
     }
 
     pub async fn check(&self, ip: &str) -> SlindowDecision {
-        let now_ms = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
+        let now_ms = now_millis();
         let seq = MEMBER_SEQ.fetch_add(1, Ordering::Relaxed);
         let member = format!("{now_ms}:{seq}");
         let mut conn = self.conn.clone();
@@ -76,13 +72,23 @@ impl SlindowLimiter {
             },
             Err(e) => {
                 tracing::warn!(error = %e, "sliding-window check failed, fail-open");
-                SlindowDecision {
-                    allowed: true,
-                    count: 0,
-                    limit: self.limit,
-                    retry_after_secs: 0,
-                }
+                self.fail_open()
             }
         }
     }
+
+    fn fail_open(&self) -> SlindowDecision {
+        SlindowDecision {
+            allowed: true,
+            count: 0,
+            limit: self.limit,
+            retry_after_secs: 0,
+        }
+    }
+}
+
+fn now_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
 }

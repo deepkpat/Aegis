@@ -6,8 +6,7 @@ pub async fn create_connection_manager(cfg: &RedisConfig) -> anyhow::Result<Conn
     connect(cfg.url.as_str()).await
 }
 
-/// Connection manager for cache L2. Uses `cache_url` when configured,
-/// otherwise falls back to the shared `url` (single-instance mode).
+/// Cache L2 connection, falls back to the shared url in single-instance mode.
 pub async fn create_cache_connection_manager(
     cfg: &RedisConfig,
 ) -> anyhow::Result<ConnectionManager> {

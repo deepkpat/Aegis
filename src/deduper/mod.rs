@@ -20,10 +20,6 @@ enum Stored {
     },
 }
 
-// ---------------------------------------------------------------------------
-// Redis-backed claim / replay store
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone)]
 pub struct DeduperRedis {
     conn: ConnectionManager,
@@ -50,10 +46,7 @@ impl DeduperRedis {
             conn,
             key_prefix: cfg.key_prefix.clone(),
             ttl_secs: cfg.ttl_secs,
-            // The in-flight lock must expire quickly so a crashed holder
-            // stops blocking retries; the completed record keeps the long
-            // replay TTL. Never let a misconfiguration wedge keys for the
-            // full replay window (note.md §1.1).
+            // Short lock TTL so a crashed holder stops blocking retries quickly.
             inflight_ttl_secs: cfg.inflight_ttl_secs.clamp(1, cfg.ttl_secs.max(1)),
         }
     }
@@ -66,7 +59,7 @@ impl DeduperRedis {
     async fn get(&self, redis_key: &str) -> Option<Stored> {
         let mut conn = self.conn.clone();
         let raw: Option<String> = match conn.get(redis_key).await {
-            Ok(v) => v,
+            Ok(value) => value,
             Err(e) => {
                 tracing::warn!(error = %e, "deduper redis get failed, fail-open");
                 return None;
@@ -106,41 +99,39 @@ impl DeduperRedis {
     pub async fn claim(&self, method: &str, path: &str, client_key: &str) -> Option<RedisClaim> {
         let redis_key = self.redis_key(method, path, client_key);
         if let Some(stored) = self.get(&redis_key).await {
-            match stored {
+            return Some(match stored {
                 Stored::Complete {
                     status,
                     body,
                     content_type,
-                } => {
-                    return Some(RedisClaim::Replay {
-                        status,
-                        body,
-                        content_type,
-                    });
-                }
-                Stored::Inflight => return Some(RedisClaim::InFlight),
-            }
+                } => RedisClaim::Replay {
+                    status,
+                    body,
+                    content_type,
+                },
+                Stored::Inflight => RedisClaim::InFlight,
+            });
         }
-        match self.set_inflight(&redis_key).await {
-            Ok(Some(_)) => Some(RedisClaim::Fresh { redis_key }),
-            Ok(None) => Some(self.resolve_race(&redis_key).await),
-            Err(e) => {
-                tracing::warn!(error = %e, "deduper redis claim failed, fail-open");
-                None
-            }
-        }
+        self.try_acquire(&redis_key).await
     }
 
-    /// Fast path for a definitive Bloom miss (`note.md` §1.2): the key was
-    /// definitely never completed, so there is no stored response to find —
-    /// skip the `GET` and go straight to `SET NX EX inflight_ttl`. A lost
-    /// race (another request claimed concurrently) falls back to a single
-    /// `GET` to distinguish replay from in-flight.
-    pub async fn claim_fresh(&self, method: &str, path: &str, client_key: &str) -> Option<RedisClaim> {
+    // Bloom miss means no completed record exists, so skip the GET.
+    pub async fn claim_fresh(
+        &self,
+        method: &str,
+        path: &str,
+        client_key: &str,
+    ) -> Option<RedisClaim> {
         let redis_key = self.redis_key(method, path, client_key);
-        match self.set_inflight(&redis_key).await {
-            Ok(Some(_)) => Some(RedisClaim::Fresh { redis_key }),
-            Ok(None) => Some(self.resolve_race(&redis_key).await),
+        self.try_acquire(&redis_key).await
+    }
+
+    async fn try_acquire(&self, redis_key: &str) -> Option<RedisClaim> {
+        match self.set_inflight(redis_key).await {
+            Ok(Some(_)) => Some(RedisClaim::Fresh {
+                redis_key: redis_key.to_owned(),
+            }),
+            Ok(None) => Some(self.resolve_race(redis_key).await),
             Err(e) => {
                 tracing::warn!(error = %e, "deduper redis claim failed, fail-open");
                 None
@@ -173,19 +164,13 @@ impl DeduperRedis {
     }
 }
 
-// ---------------------------------------------------------------------------
-// In-memory rotating Bloom filter gate
-// ---------------------------------------------------------------------------
-
 struct BloomRing {
     buckets: Vec<BloomFilter>,
     current: usize,
     last_rotation: Instant,
 }
 
-/// Multi-bucket rotating Bloom filter. A key inserted at time `t` is
-/// retained for `buckets * bucket_ttl_secs`, which must be >= the Redis
-/// idempotency TTL, guaranteeing zero false negatives within the window.
+// Rotating Bloom filter with zero false negatives inside the retention window.
 pub struct DeduperBloom {
     inner: Arc<RwLock<BloomRing>>,
     capacity: usize,
@@ -207,8 +192,7 @@ impl DeduperBloom {
     fn new(cfg: &DeduperBloomConfig) -> Self {
         let num_buckets = cfg.buckets.max(1);
         let capacity = usize::try_from(cfg.capacity.max(1)).unwrap_or(usize::MAX);
-        // `with_false_pos` panics on fp == 0, so clamp to a strict positive
-        // lower bound; values near 1 are meaningless, clamp those too.
+        // Lower bound keeps with_false_pos from panicking on zero.
         let false_positive_rate = cfg.false_positive_rate.clamp(f64::MIN_POSITIVE, 0.999_999);
         let buckets = (0..num_buckets)
             .map(|_| Self::build_bucket(capacity, false_positive_rate))
@@ -225,9 +209,6 @@ impl DeduperBloom {
         }
     }
 
-    /// `BloomFilter::with_false_pos(fp).expected_items(n)` — the builder is
-    /// consumed by `expected_items`, which also optimizes the hash count for
-    /// the target false-positive rate.
     fn build_bucket(capacity: usize, false_positive_rate: f64) -> BloomFilter {
         BloomFilter::with_false_pos(false_positive_rate).expected_items(capacity)
     }
@@ -241,8 +222,7 @@ impl DeduperBloom {
         }
     }
 
-    /// Returns `true` if the key may have been seen. A `false` answer is
-    /// definitive (zero false negatives within the retention window).
+    // False is definitive inside the retention window.
     pub async fn maybe_contains(&self, key: &str) -> bool {
         let mut ring = self.inner.write().await;
         self.rotate_if_due(&mut ring);
@@ -257,10 +237,6 @@ impl DeduperBloom {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Composite deduper
-// ---------------------------------------------------------------------------
-
 #[derive(Debug, Clone)]
 pub struct Deduper {
     pub bloom: Option<Arc<DeduperBloom>>,
@@ -270,9 +246,6 @@ pub struct Deduper {
 }
 
 pub enum Claim {
-    /// First execution. `redis_key` is `Some` when a Redis lock was
-    /// acquired and must be completed/released; `bloom_key` is `Some`
-    /// when the key must be recorded in the Bloom filter on success.
     Fresh {
         redis_key: Option<String>,
         bloom_key: Option<String>,
@@ -341,10 +314,7 @@ impl Deduper {
     }
 
     pub async fn claim(&self, method: &str, path: &str, client_key: &str) -> Option<Claim> {
-        // Bloom gate: a definitive miss means the key cannot be a replay of
-        // a completed request, so we skip the Redis read and go straight to
-        // lock acquisition via `claim_fresh` (SET NX only). Concurrent
-        // in-flight duplicates are still caught by the SET NX below.
+        // Bloom miss skips the Redis read and goes straight to lock acquisition.
         if let Some(bloom) = &self.bloom
             && !bloom.maybe_contains(client_key).await
         {

@@ -2,14 +2,9 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RedisConfig {
-    /// Durable instance: idempotency claims, rate-limit windows, pub/sub.
-    /// Run with `noeviction` so memory pressure surfaces as a loud write
-    /// error (which the code handles fail-open) instead of silently evicting
-    /// correctness-critical keys (note.md §1.4).
+    // Durable instance: idempotency, rate limits, pub/sub. Use noeviction.
     pub url: String,
-    /// Evictable instance for cache L2 only (`allkeys-lru`). Optional for
-    /// backward compatibility: when absent, cache L2 shares `url` — the old
-    /// single-instance setup with the §1.4 eviction gap intact.
+    // Evictable cache L2. Falls back to url when absent.
     #[serde(default)]
     pub cache_url: Option<String>,
 }
