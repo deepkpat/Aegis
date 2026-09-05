@@ -31,6 +31,12 @@ async fn invalidate_caches(state: &AppState, id: &str) {
     }
 }
 
+async fn broadcast_invalidation(state: &AppState, id: &str) {
+    if let Some(channel) = &state.invalidation_channel {
+        crate::cache::publish_invalidation(&state.redis, channel, id).await;
+    }
+}
+
 pub async fn create_record(
     State(state): State<AppState>,
     Json(body): Json<CreateRecordRequest>,
@@ -51,6 +57,7 @@ pub async fn create_record(
         _ => ApiError::from(e),
     })?;
     fill_caches(&state, &rec).await;
+    broadcast_invalidation(&state, &rec.id).await;
     Ok((StatusCode::CREATED, Json(rec)))
 }
 
@@ -105,6 +112,7 @@ pub async fn patch_record(
     .await?
     {
         fill_caches(&state, &rec).await;
+        broadcast_invalidation(&state, &rec.id).await;
         return Ok(Json(rec));
     }
     let current = sqlx::query_scalar::<_, i32>("SELECT version FROM records WHERE id = $1")
@@ -133,6 +141,7 @@ pub async fn put_record(
     .fetch_one(&state.pg)
     .await?;
     fill_caches(&state, &rec).await;
+    broadcast_invalidation(&state, &rec.id).await;
     let status = match rec.version {
         1 => StatusCode::CREATED,
         _ => StatusCode::OK,
@@ -152,5 +161,6 @@ pub async fn delete_record(
         return Err(ApiError::NotFound(format!("Record '{id}' does not exist")));
     }
     invalidate_caches(&state, &id).await;
+    broadcast_invalidation(&state, &id).await;
     Ok(StatusCode::NO_CONTENT)
 }

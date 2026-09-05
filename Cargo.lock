@@ -10,6 +10,7 @@ dependencies = [
  "axum",
  "chrono",
  "fastbloom",
+ "futures-util",
  "moka",
  "redis",
  "serde",

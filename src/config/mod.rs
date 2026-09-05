@@ -8,7 +8,7 @@ pub mod server;
 pub mod slindow;
 
 pub use app::AppConfig;
-pub use cache::{CacheConfig, MokaConfig, RedisCacheConfig};
+pub use cache::{CacheConfig, InvalidationConfig, MokaConfig, RedisCacheConfig};
 pub use coalescer::CoalescerConfig;
 pub use database::PostgresConfig;
 pub use deduper::{DeduperBloomConfig, DeduperConfig, DeduperRedisConfig};

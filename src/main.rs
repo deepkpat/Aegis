@@ -1,5 +1,5 @@
 use aegis::api::router::{AppState, app_router};
-use aegis::cache::CompositeCache;
+use aegis::cache::{CompositeCache, spawn_invalidation_listener};
 use aegis::coalescer::Coalescer;
 use aegis::config::AppConfig;
 use aegis::db::{create_connection_manager, create_pool};
@@ -29,6 +29,17 @@ async fn main() -> anyhow::Result<()> {
     let coalescer = Coalescer::new(&cfg.coalescer);
     let deduper = Deduper::new(&cfg.deduper, redis.clone());
 
+    let invalidation_channel = cfg
+        .cache
+        .invalidation
+        .enabled
+        .then(|| cfg.cache.invalidation.channel.clone());
+    if let (Some(channel), Some(c)) = (&invalidation_channel, &cache)
+        && c.has_l1()
+    {
+        spawn_invalidation_listener(cfg.redis.url.clone(), channel.clone(), c.clone());
+    }
+
     let state = AppState {
         pg,
         redis,
@@ -36,6 +47,7 @@ async fn main() -> anyhow::Result<()> {
         limiter,
         coalescer,
         deduper,
+        invalidation_channel,
     };
     let app = app_router(state).layer(TimeoutLayer::with_status_code(
         StatusCode::REQUEST_TIMEOUT,

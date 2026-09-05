@@ -35,4 +35,8 @@ impl MokaCache {
     pub async fn invalidate(&self, id: &str) {
         self.inner.invalidate(id).await;
     }
+
+    pub fn invalidate_all(&self) {
+        self.inner.invalidate_all();
+    }
 }

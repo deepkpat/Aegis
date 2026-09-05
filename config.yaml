@@ -23,6 +23,9 @@ cache:
     enabled: true
     ttl_secs: 512
     key_prefix: "aegis:records:"
+  invalidation:
+    enabled: true
+    channel: "aegis:cache:invalidate"
 
 slindow:
   enabled: true

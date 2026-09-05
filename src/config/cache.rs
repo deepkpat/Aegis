@@ -5,6 +5,13 @@ pub struct CacheConfig {
     pub enabled: bool,
     pub moka: MokaConfig,
     pub redis: RedisCacheConfig,
+    pub invalidation: InvalidationConfig,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct InvalidationConfig {
+    pub enabled: bool,
+    pub channel: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

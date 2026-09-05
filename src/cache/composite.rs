@@ -64,4 +64,21 @@ impl CompositeCache {
             (None, None) => {}
         }
     }
+
+    #[must_use]
+    pub fn has_l1(&self) -> bool {
+        self.moka.is_some()
+    }
+
+    pub async fn invalidate_l1(&self, id: &str) {
+        if let Some(moka) = &self.moka {
+            moka.invalidate(id).await;
+        }
+    }
+
+    pub fn invalidate_all_l1(&self) {
+        if let Some(moka) = &self.moka {
+            moka.invalidate_all();
+        }
+    }
 }

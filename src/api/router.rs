@@ -26,6 +26,7 @@ pub struct AppState {
     pub limiter: Option<SlindowLimiter>,
     pub coalescer: Option<Coalescer<Record, ApiError>>,
     pub deduper: Option<Deduper>,
+    pub invalidation_channel: Option<String>,
 }
 
 impl FromRef<AppState> for PgPool {
