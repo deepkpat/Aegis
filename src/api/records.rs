@@ -87,8 +87,16 @@ pub async fn get_record(
         return Ok(Json(rec));
     }
     if let Some(coalescer) = &state.coalescer {
+        // Move owned copies in: the leader's DB work runs on a detached task
+        // that may outlive this request, so the closure must be 'static.
+        let st = state.clone();
+        let key = id.clone();
         return coalescer
-            .execute(&id, || fetch_pg(&state, &id))
+            .execute(&id, move || {
+                let st = st.clone();
+                let key = key.clone();
+                async move { fetch_pg(&st, &key).await }
+            })
             .await
             .map(Json);
     }
