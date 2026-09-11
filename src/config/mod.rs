@@ -1,17 +1,15 @@
 pub mod app;
 pub mod cache;
 pub mod coalescer;
-pub mod database;
+pub mod db;
 pub mod deduper;
-pub mod redis;
+pub mod limiters;
 pub mod server;
-pub mod slindow;
 
 pub use app::AppConfig;
-pub use cache::{CacheConfig, InvalidationConfig, MokaConfig, RedisCacheConfig};
+pub use cache::{CacheConfig, InvalidationConfig, MokaCacheConfig, RedisCacheConfig};
 pub use coalescer::CoalescerConfig;
-pub use database::PostgresConfig;
-pub use deduper::{DeduperBloomConfig, DeduperConfig, DeduperRedisConfig};
-pub use redis::RedisConfig;
+pub use db::{PostgresConfig, RedisConfig};
+pub use deduper::{BloomDeduperConfig, DeduperConfig, RedisDeduperConfig};
+pub use limiters::{SlindowConfig, TrustedNet, parse_trusted_proxies, proxy_is_trusted};
 pub use server::ServerConfig;
-pub use slindow::SlindowConfig;

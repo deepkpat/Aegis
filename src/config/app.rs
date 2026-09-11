@@ -1,26 +1,25 @@
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
-use super::cache::CacheConfig;
-use super::coalescer::CoalescerConfig;
-use super::database::PostgresConfig;
-use super::deduper::DeduperConfig;
-use super::redis::RedisConfig;
-use super::server::ServerConfig;
-use super::slindow::SlindowConfig;
+use crate::config::CacheConfig;
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+use super::{
+    CoalescerConfig, DeduperConfig, PostgresConfig, RedisConfig, ServerConfig, SlindowConfig,
+};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub server: ServerConfig,
     pub postgres: PostgresConfig,
     pub redis: RedisConfig,
-    pub cache: CacheConfig,
     pub slindow: SlindowConfig,
-    pub coalescer: CoalescerConfig,
     pub deduper: DeduperConfig,
+    pub coalescer: CoalescerConfig,
+    pub cache: CacheConfig,
 }
 
 impl AppConfig {
+    #[must_use]
     pub fn from_file(path: impl AsRef<std::path::Path>) -> anyhow::Result<Self> {
         let path = path.as_ref();
         let content = std::fs::read_to_string(path)

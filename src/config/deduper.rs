@@ -1,16 +1,16 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeduperConfig {
     pub enabled: bool,
     pub header: String,
     pub require_key: bool,
-    pub bloom: DeduperBloomConfig,
-    pub redis: DeduperRedisConfig,
+    pub bloom: BloomDeduperConfig,
+    pub redis: RedisDeduperConfig,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct DeduperBloomConfig {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BloomDeduperConfig {
     pub enabled: bool,
     pub capacity: u64,
     pub false_positive_rate: f64,
@@ -18,11 +18,10 @@ pub struct DeduperBloomConfig {
     pub bucket_ttl_secs: u64,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct DeduperRedisConfig {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RedisDeduperConfig {
     pub enabled: bool,
     pub key_prefix: String,
     pub ttl_secs: u64,
-    // Short-lived lock guarding in-flight requests, much shorter than ttl_secs.
     pub inflight_ttl_secs: u64,
 }

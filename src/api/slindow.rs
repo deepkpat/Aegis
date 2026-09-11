@@ -11,7 +11,7 @@ use std::net::SocketAddr;
 
 use crate::limiters::SlindowLimiter;
 
-fn uint_header(value: u32) -> HeaderValue {
+fn uint_header(value: u64) -> HeaderValue {
     HeaderValue::from_str(&value.to_string()).unwrap_or_else(|_| HeaderValue::from_static("0"))
 }
 

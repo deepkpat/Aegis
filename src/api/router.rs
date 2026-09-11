@@ -22,7 +22,7 @@ use super::errors::ApiError;
 pub struct AppState {
     pub pg: PgPool,
     pub redis: ConnectionManager,
-    // Separate L2 handle so /ready can report each Redis instance independently.
+    // separate l2 handle so /ready can report each redis instance independently.
     pub redis_cache: ConnectionManager,
     pub cache: Option<CompositeCache>,
     pub limiter: Option<SlindowLimiter>,
@@ -43,7 +43,7 @@ impl FromRef<AppState> for ConnectionManager {
     }
 }
 
-// Newtype so handlers can extract the L2 connection alongside the primary one.
+// newtype so handlers can extract the l2 connection alongside the primary one.
 #[derive(Clone)]
 pub struct CacheRedis(pub ConnectionManager);
 

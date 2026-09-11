@@ -87,7 +87,7 @@ pub async fn get_record(
         return Ok(Json(rec));
     }
     if let Some(coalescer) = &state.coalescer {
-        // Move owned copies in: the leader's DB work runs on a detached task
+        // move owned copies in: the leader's DB work runs on a detached task
         // that may outlive this request, so the closure must be 'static.
         let st = state.clone();
         let key = id.clone();

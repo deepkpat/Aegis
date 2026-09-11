@@ -14,7 +14,7 @@ pub async fn ready(
     State(mut redis): State<ConnectionManager>,
     State(CacheRedis(mut redis_cache)): State<CacheRedis>,
 ) -> (StatusCode, Json<Value>) {
-    // In single-instance mode both handles point at the same server.
+    // in single-instance mode both handles point at the same server.
     let (pg_res, redis_res, cache_res) = tokio::join!(
         sqlx::query("SELECT 1").execute(&pg),
         async { redis.ping::<String>().await },

@@ -11,8 +11,6 @@ postgres:
 
 redis:
   url: "redis://localhost:6379"
-  # Evictable cache-L2 instance (note.md §1.4). Omit to run single-instance
-  # mode with cache L2 sharing `url` (and its eviction gap).
   cache_url: "redis://localhost:6380"
 
 cache:
@@ -54,7 +52,4 @@ deduper:
     enabled: true
     key_prefix: "aegis:idem:"
     ttl_secs: 86400
-    # In-flight lock lifetime (note.md §1.1). Must exceed
-    # server.request_timeout_secs (32s) with margin, but be tiny vs ttl_secs
-    # so a crashed holder stops wedging retries after ~2min, not 24h.
     inflight_ttl_secs: 120

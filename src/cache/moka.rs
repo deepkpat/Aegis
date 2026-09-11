@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use moka::future::Cache;
 
-use crate::config::MokaConfig;
+use crate::config::MokaCacheConfig;
 use crate::db::Record;
 
 #[derive(Debug, Clone)]
@@ -12,7 +12,7 @@ pub struct MokaCache {
 
 impl MokaCache {
     #[must_use]
-    pub fn new(cfg: &MokaConfig) -> Option<Self> {
+    pub fn new(cfg: &MokaCacheConfig) -> Option<Self> {
         if !cfg.enabled {
             return None;
         }

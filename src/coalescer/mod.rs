@@ -1,9 +1,13 @@
-use std::collections::HashMap;
 use std::future::Future;
+use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use tokio::sync::{Mutex, broadcast};
+use dashmap::DashMap;
+use dashmap::mapref::entry::Entry as DashEntry;
+use futures_util::FutureExt;
+use tokio::sync::watch;
 
 use crate::config::CoalescerConfig;
 
@@ -12,17 +16,16 @@ static ENTRY_IDS: AtomicU64 = AtomicU64::new(1);
 #[derive(Debug)]
 struct Entry<T, E> {
     id: u64,
-    tx: broadcast::Sender<Result<T, E>>,
+    tx: watch::Sender<Option<Result<T, E>>>,
 }
 
-type Inflight<T, E> = Arc<Mutex<HashMap<String, Arc<Entry<T, E>>>>>;
+type Inflight<T, E> = Arc<DashMap<String, Arc<Entry<T, E>>>>;
 
 #[derive(Debug)]
 pub struct Coalescer<T, E> {
     inflight: Inflight<T, E>,
 }
 
-// Manual Clone avoids adding a Clone bound on T and E.
 impl<T, E> Clone for Coalescer<T, E> {
     fn clone(&self) -> Self {
         Self {
@@ -42,109 +45,99 @@ where
             return None;
         }
         Some(Self {
-            inflight: Arc::new(Mutex::new(HashMap::new())),
+            inflight: Arc::new(DashMap::new()),
         })
     }
 
     pub async fn execute<F, Fut>(&self, key: &str, fut: F) -> Result<T, E>
     where
-        // Fn (not FnOnce): a waiter that re-contends after a dead leader
-        // must be able to build the future again.
         F: Fn() -> Fut + Send + 'static,
         Fut: Future<Output = Result<T, E>> + Send + 'static,
     {
+        let mut failures: u32 = 0;
         loop {
-            let (id, mut rx) = {
-                let mut guard = self.inflight.lock().await;
-                if let Some(entry) = guard.get(key) {
-                    // Subscribe while holding the lock: the leader sends while
-                    // holding the same lock, so we can't miss the value.
-                    (entry.id, entry.tx.subscribe())
-                } else {
-                    let (tx, _rx) = broadcast::channel(1);
-                    let entry = Arc::new(Entry {
-                        id: ENTRY_IDS.fetch_add(1, Ordering::Relaxed),
-                        tx,
-                    });
-                    guard.insert(key.to_owned(), Arc::clone(&entry));
-                    // Subscribe before spawning so the leader never misses
-                    // its own result even if the worker finishes instantly.
-                    let rx = entry.tx.subscribe();
-                    let id = entry.id;
-                    drop(guard);
+            // atomic check-and-insert scoped strictly to the key's shard.
+            let (id, mut rx) = match self.inflight.entry(key.to_string()) {
+                DashEntry::Occupied(entry) => {
+                    let val = entry.get();
+                    (val.id, val.tx.subscribe())
+                }
+                DashEntry::Vacant(entry) => {
+                    let (tx, rx) = watch::channel(None);
+                    let id = ENTRY_IDS.fetch_add(1, Ordering::Relaxed);
+                    let item = Arc::new(Entry { id, tx });
+
+                    entry.insert(Arc::clone(&item));
+
                     Self::spawn_leader(
                         Arc::clone(&self.inflight),
-                        key.to_owned(),
-                        Arc::clone(&entry),
+                        key.to_string(),
+                        Arc::clone(&item),
                         fut(),
                     );
-                    drop(entry);
+
                     (id, rx)
                 }
             };
-            // Only a Receiver is held across this await. If the leader task
-            // dies without sending, the channel reports Closed instead of
-            // hanging forever.
-            loop {
-                match rx.recv().await {
-                    Ok(value) => return value,
-                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                    Err(broadcast::error::RecvError::Closed) => break,
+
+            // await result without holding any dash-map guard or shard lock.
+            if rx.wait_for(|val| val.is_some()).await.is_ok() {
+                if let Some(result) = rx.borrow().as_ref() {
+                    return result.clone();
                 }
             }
-            // Leader died without sending, or we subscribed after a completed
-            // send and missed it. Clear our own stale entry (the id check
-            // avoids clobbering a replacement leader) and re-contend, so
-            // exactly one waiter becomes the new leader.
-            {
-                let mut guard = self.inflight.lock().await;
-                let stale = guard.get(key).is_some_and(|cur| cur.id == id);
-                if stale {
-                    guard.remove(key);
-                    tracing::warn!(key = %key, "coalescer leader dropped, re-electing");
-                }
+
+            // leader dropped without sending. atomic cleanup via predicate:
+            // removes key ONLY if the entry ID matches our leader generation.
+            let removed = self
+                .inflight
+                .remove_if(key, |_, cur| cur.id == id)
+                .is_some();
+            if removed {
+                failures = failures.saturating_add(1);
+                tracing::warn!(key = %key, failures, "coalescer leader dropped, re-electing");
+            } else {
+                failures = 0;
             }
+
+            backoff(failures).await;
         }
     }
 
-    fn spawn_leader<Fut>(
-        inflight: Inflight<T, E>,
-        key: String,
-        entry: Arc<Entry<T, E>>,
-        fut: Fut,
-    ) where
+    fn spawn_leader<Fut>(inflight: Inflight<T, E>, key: String, entry: Arc<Entry<T, E>>, fut: Fut)
+    where
         Fut: Future<Output = Result<T, E>> + Send + 'static,
     {
-        // Detached task: outlives the leader's HTTP request, so a leader
-        // timeout/cancel no longer strands the followers.
         tokio::spawn(async move {
-            // Nested task isolates a panic in user work so the cleanup below
-            // always runs instead of leaking the map entry.
-            let outcome = tokio::spawn(fut).await;
-            let mut guard = inflight.lock().await;
-            let ours = guard.get(&key).is_some_and(|cur| cur.id == entry.id);
+            let outcome = AssertUnwindSafe(fut).catch_unwind().await;
+
             match outcome {
                 Ok(result) => {
-                    if ours {
-                        // Send while holding the lock so no subscriber can
-                        // slip in between the send and the remove.
-                        if let Some(cur) = guard.get(&key) {
-                            let _ = cur.tx.send(result.clone());
-                        }
-                        guard.remove(&key);
-                    } else {
-                        // Entry already replaced/removed; still notify our
-                        // own subscribers.
-                        let _ = entry.tx.send(result.clone());
-                    }
+                    let _ = entry.tx.send(Some(result));
+                    // remove entry only if it still belongs to this leader task
+                    inflight.remove_if(&key, |_, cur| cur.id == entry.id);
                 }
-                Err(join_err) => {
-                    if ours {
-                        guard.remove(&key);
-                    }
-                    tracing::warn!(key = %key, error = %join_err, "coalescer worker failed, re-electing");
+                Err(_) => {
+                    inflight.remove_if(&key, |_, cur| cur.id == entry.id);
+                    tracing::warn!(key = %key, "coalescer leader panicked, cleaning up key");
                 }
             }
         });
     }
+}
+
+async fn backoff(failures: u32) {
+    if failures == 0 {
+        return;
+    }
+    let shift = failures.saturating_sub(1).min(5);
+    let base_ms = 50u64.saturating_mul(1 << shift).min(2000);
+
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .subsec_nanos() as u64;
+    let jitter = nanos % (base_ms / 2 + 1);
+
+    tokio::time::sleep(Duration::from_millis(base_ms / 2 + jitter)).await;
 }

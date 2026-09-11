@@ -6,16 +6,21 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0.104"
 axum = "0.8.9"
+base64 = "0.22"
 chrono = { version = "0.4.45", features = ["serde"] }
+dashmap = "6.2.1"
 fastbloom = "0.17.0"
 futures-util = "0.3"
 moka = { version = "0.12.16", features = ["future"] }
+parking_lot = "0.12.5"
 redis = { version = "1.6.0", features = ["tokio-comp", "connection-manager"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 serde_yaml = "0.9.34"
+sha2 = "0.10"
 sqlx = { version = "0.9.0", features = ["chrono", "json", "postgres", "runtime-tokio", "tls-native-tls"] }
 tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "net", "signal", "sync", "time"] }
-tower-http = { version = "0.7.1", features = ["timeout"] }
+tower-http = { version = "0.7.1", features = ["limit", "timeout"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
+uuid = "1.26.0"

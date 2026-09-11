@@ -9,9 +9,9 @@ use axum::response::{IntoResponse, Response};
 use crate::api::router::AppState;
 use crate::deduper::{Claim, Deduper};
 
-// Responses above this are executed but not stored for replay.
+// responses above this are executed but not stored for replay.
 const REPLAY_BODY_LIMIT: usize = 1 << 20;
-// Upper bound for buffering a response in memory.
+// upper bound for buffering a response in memory.
 const BUFFER_BODY_LIMIT: usize = 16 << 20;
 
 pub async fn deduper_middleware(
@@ -39,7 +39,7 @@ pub async fn deduper_middleware(
         return next.run(request).await;
     };
 
-    // Claim failure means a subsystem error, so fail open.
+    // claim failure means a subsystem error, so fail open.
     let Some(claim) = deduper.claim(&method, &path, &client_key).await else {
         return next.run(request).await;
     };
@@ -49,12 +49,14 @@ pub async fn deduper_middleware(
             status,
             body,
             content_type,
+            ..
         } => {
             tracing::debug!(%client_key, "idempotent replay");
             replay(status, body, content_type)
         }
-        Claim::InFlight => (
+        Claim::InFlight { retry_after_secs } => (
             StatusCode::CONFLICT,
+            [("retry-after", retry_after_secs.to_string())],
             "a request with this idempotency key is still in flight",
         )
             .into_response(),
@@ -90,9 +92,9 @@ fn extract_key(request: &Request, deduper: &Deduper) -> Option<String> {
         .map(str::to_owned)
 }
 
-fn replay(status: u16, body: String, content_type: String) -> Response {
+fn replay(status: u16, body: Option<Vec<u8>>, content_type: String) -> Response {
     let status = StatusCode::from_u16(status).unwrap_or(StatusCode::OK);
-    let mut resp = (status, body).into_response();
+    let mut resp = (status, body.unwrap_or_default()).into_response();
     if let Ok(value) = content_type.parse() {
         resp.headers_mut().insert(CONTENT_TYPE, value);
     }
@@ -118,7 +120,7 @@ async fn store_response(
             .into_response();
     };
 
-    // Oversized bodies still return normally, just without a replay record.
+    // oversized bodies still return normally, just without a replay record.
     if bytes.len() > REPLAY_BODY_LIMIT {
         tracing::warn!(%client_key, bytes = bytes.len(), "response exceeds replay limit");
         deduper.release(redis_key.as_deref()).await;
@@ -140,8 +142,9 @@ async fn store_response(
             redis_key.as_deref(),
             bloom_key.as_deref(),
             status,
-            &String::from_utf8_lossy(&bytes),
+            Some(bytes.as_ref()),
             &content_type,
+            "",
         )
         .await;
     Response::from_parts(parts, Body::from(bytes))
